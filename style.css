@@ -1,149 +1,107 @@
-* {
-  box-sizing: border-box;
-  font-family: system-ui, sans-serif;
+/* style.css — Neon green background with funky animated outline */
+:root{
+  --neon: #39FF14;
+  --neon-dark: #001100;
+  --outline-blur: 10px;
+  --outline-size: 8px;
+  --border-radius: 10px;
+}
+
+/* Apply to whole site */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  margin: 0;
-  background: #0f172a;
-  color: #e5e7eb;
+  background: var(--neon);
+  color: var(--neon-dark);
+  min-height: 100vh;
+  position: relative;
+  z-index: 0;
+  overflow-x: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
 }
 
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.8rem;
+/* Funky animated multicolor outline that surrounds the viewport */
+body::before {
+  content: "";
+  position: fixed;
+  inset: calc(-1 * var(--outline-size));
+  z-index: -1;
+  border-radius: calc(var(--border-radius) + var(--outline-size));
+  background: conic-gradient(from 0deg,
+              var(--neon),
+              #00F0FF,
+              #FF3AC6,
+              #FFD200,
+              var(--neon));
+  filter: blur(var(--outline-blur));
+  opacity: 0.95;
+  transform-origin: 50% 50%;
+  animation: rotateBorder 6s linear infinite;
+  pointer-events: none;
+  will-change: transform;
 }
 
-.brand {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
-.logo {
-  font-size: 2rem;
-}
-
-.subtitle {
-  opacity: 0.7;
-  font-size: 0.9rem;
-}
-
-.container {
-  max-width: 900px;
-  margin: auto;
-  padding: 1rem;
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
-}
-
-.card {
-  background: #1e293b;
-  padding: 1.5rem;
-  border-radius: 14px;
-}
-
-.card span {
-  opacity: 0.7;
-}
-
-.income { border-left: 6px solid #22c55e; }
-.expense { border-left: 6px solid #ef4444; }
-.balance { border-left: 6px solid #38bdf8; }
-
-.panel {
-  margin-top: 2rem;
-}
-
-.tx-list {
-  list-style: none;
-  padding: 0;
-}
-
-.tx-list li {
-  background: #1e293b;
-  padding: 1rem;
-  border-radius: 10px;
-  margin-bottom: 0.7rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.tx-actions button {
-  background: none;
-  border: none;
-  color: #94a3b8;
-  cursor: pointer;
-}
-
-.empty {
-  opacity: 0.6;
-}
-
-footer {
-  text-align: center;
-  padding: 2rem;
-  opacity: 0.6;
-  font-size: 0.9rem;
-}
-
-.btn {
-  padding: 0.6rem 1.2rem;
-  border-radius: 999px;
-  cursor: pointer;
-  border: none;
-}
-
-.primary {
-  background: #38bdf8;
-  color: #020617;
-}
-
-.ghost {
-  background: transparent;
-  color: #e5e7eb;
-}
-
-/* Modal */
-.modal {
+/* Subtle inner glow to add depth */
+body::after {
+  content: "";
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(57,255,20,0.12), transparent 12%),
+    radial-gradient(circle at 85% 85%, rgba(255,215,0,0.06), transparent 20%);
+  pointer-events: none;
 }
 
-.modal-box {
-  background: #020617;
-  padding: 2rem;
-  border-radius: 14px;
-  width: 100%;
-  max-width: 360px;
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
+/* Slight inner outline for contrast against bright background (optional) */
+.container, header, main, footer, .app, #root {
+  /* These selectors are safe targets if your layout uses them —
+     remove or adapt if they conflict with existing layout rules. */
+  outline: 2px solid rgba(0,0,0,0.04);
+  border-radius: var(--border-radius);
 }
 
-.modal-box input,
-.modal-box select {
-  padding: 0.6rem;
+/* Keyframes */
+@keyframes rotateBorder {
+  to { transform: rotate(1turn); }
+}
+
+/* Accessibility: respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+    filter: blur(calc(var(--outline-blur) / 2));
+  }
+}
+
+/* Link and interactive styles tuned for neon background */
+a, button, input, select, textarea {
+  color: var(--neon-dark);
+}
+
+a {
+  text-decoration: underline;
+  text-decoration-color: rgba(0,0,0,0.08);
+}
+
+/* Small helper: darker cards for readability on neon bg */
+.card, .panel, .modal {
+  background: rgba(255,255,255,0.96);
+  color: #042; /* keep readable text */
   border-radius: 8px;
-  border: none;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
 }
 
-.modal-actions {
-  display: flex;
-  justify-content: space-between;
-}
-
-.hidden {
-  display: none;
+/* If you need a darker overall theme for long reading areas */
+.content-dark {
+  background: rgba(0,0,0,0.06);
+  color: #07120a;
+  padding: 1rem;
+  border-radius: 6px;
 }
