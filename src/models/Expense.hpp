@@ -3,9 +3,6 @@
 
 class Expense : public Transaction {
 public:
-    Expense(int id,
-            double amount,
-            const std::string& currency,
-            const std::string& date)
-        : Transaction(id, amount, currency, date, TransactionType::EXPENSE) {}
+    Expense(double amount, const std::string& currency, const std::string& date)
+        : Transaction(0, amount, currency, date, TransactionType::EXPENSE) {}
 };

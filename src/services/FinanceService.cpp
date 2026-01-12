@@ -1,42 +1,25 @@
-#include "FinanceService.hpp"
+=#include "FinanceService.hpp"
 #include "../models/Income.hpp"
 #include "../models/Expense.hpp"
 
-FinanceService::FinanceService(std::shared_ptr<TransactionRepository> repo)
-    : repository(repo) {}
+FinanceService::FinanceService(std::shared_ptr<TransactionRepository> r) : repo(r) {}
 
-void FinanceService::addIncome(double amount,
-                               const std::string& currency,
-                               const std::string& date) {
-    Income income(0, amount, currency, date);
-    repository->save(income);
+void FinanceService::addIncome(double a,const std::string& c,const std::string& d){
+    repo->save(Income(a,c,d));
+}
+void FinanceService::addExpense(double a,const std::string& c,const std::string& d){
+    repo->save(Expense(a,c,d));
 }
 
-void FinanceService::addExpense(double amount,
-                                const std::string& currency,
-                                const std::string& date) {
-    Expense expense(0, amount, currency, date);
-    repository->save(expense);
+double FinanceService::totalIncome(){
+    double t=0; for(auto& x:repo->findAll())
+        if(x.getType()==TransactionType::INCOME) t+=x.getAmount();
+    return t;
 }
-
-double FinanceService::getTotalIncome() {
-    double total = 0;
-    for (const auto& tx : repository->findAll()) {
-        if (tx.getType() == TransactionType::INCOME)
-            total += tx.getAmount();
-    }
-    return total;
+double FinanceService::totalExpense(){
+    double t=0; for(auto& x:repo->findAll())
+        if(x.getType()==TransactionType::EXPENSE) t+=x.getAmount();
+    return t;
 }
-
-double FinanceService::getTotalExpense() {
-    double total = 0;
-    for (const auto& tx : repository->findAll()) {
-        if (tx.getType() == TransactionType::EXPENSE)
-            total += tx.getAmount();
-    }
-    return total;
-}
-
-double FinanceService::getBalance() {
-    return getTotalIncome() - getTotalExpense();
-}
+double FinanceService::balance(){ return totalIncome()-totalExpense(); }
+std::vector<Transaction> FinanceService::all(){ return repo->findAll(); }

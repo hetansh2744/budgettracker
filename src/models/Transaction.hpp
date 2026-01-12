@@ -1,10 +1,7 @@
 #pragma once
 #include <string>
 
-enum class TransactionType {
-    INCOME,
-    EXPENSE
-};
+enum class TransactionType { INCOME, EXPENSE };
 
 class Transaction {
 protected:
@@ -15,13 +12,8 @@ protected:
     TransactionType type;
 
 public:
-    Transaction(int id,
-                double amount,
-                const std::string& currency,
-                const std::string& date,
-                TransactionType type);
-
-    virtual ~Transaction() = default;
+    Transaction(int id, double amount, std::string currency,
+                std::string date, TransactionType type);
 
     int getId() const;
     double getAmount() const;

@@ -1,10 +1,7 @@
 #include "Transaction.hpp"
 
-Transaction::Transaction(int id,
-                         double amount,
-                         const std::string& currency,
-                         const std::string& date,
-                         TransactionType type)
+Transaction::Transaction(int id, double amount, std::string currency,
+                         std::string date, TransactionType type)
     : id(id), amount(amount), currency(currency), date(date), type(type) {}
 
 int Transaction::getId() const { return id; }

@@ -3,16 +3,15 @@
 #include "../repositories/TransactionRepository.hpp"
 
 class FinanceService {
+    std::shared_ptr<TransactionRepository> repo;
 public:
     explicit FinanceService(std::shared_ptr<TransactionRepository> repo);
 
-    void addIncome(double amount, const std::string& currency, const std::string& date);
-    void addExpense(double amount, const std::string& currency, const std::string& date);
+    void addIncome(double amt, const std::string& cur, const std::string& date);
+    void addExpense(double amt, const std::string& cur, const std::string& date);
 
-    double getTotalIncome();
-    double getTotalExpense();
-    double getBalance();
-
-private:
-    std::shared_ptr<TransactionRepository> repository;
+    double totalIncome();
+    double totalExpense();
+    double balance();
+    std::vector<Transaction> all();
 };
