@@ -3,137 +3,75 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Finance Tracker</title>
+  <title>FlowFund</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="header">
-    <div class="brand">
-      <div class="logo">💰</div>
-      <div>
-        <h1>Finance Tracker</h1>
-        <p>Track income, expenses, and balance</p>
-      </div>
-    </div>
 
-    <div class="header-actions">
-      <button id="btnAdd" class="btn primary">+ Add transaction</button>
-      <button id="btnReset" class="btn ghost" title="Clears local data">Reset</button>
-    </div>
-  </header>
-
-  <main class="container">
-    <section class="cards">
-      <div class="card income">
-        <h3>Income</h3>
-        <p id="incomeAmount">$0</p>
-      </div>
-
-      <div class="card expense">
-        <h3>Expenses</h3>
-        <p id="expenseAmount">$0</p>
-      </div>
-
-      <div class="card balance">
-        <h3>Balance</h3>
-        <p id="balanceAmount">$0</p>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Transactions</h2>
-
-        <div class="panel-tools">
-          <select id="filterType" class="input">
-            <option value="ALL">All</option>
-            <option value="INCOME">Income</option>
-            <option value="EXPENSE">Expense</option>
-          </select>
-
-          <input id="searchText" class="input" placeholder="Search (e.g., Rent, Salary)" />
-          <select id="sortBy" class="input">
-            <option value="DATE_DESC">Date ↓</option>
-            <option value="DATE_ASC">Date ↑</option>
-            <option value="AMOUNT_DESC">Amount ↓</option>
-            <option value="AMOUNT_ASC">Amount ↑</option>
-          </select>
-        </div>
-      </div>
-
-      <ul id="transactionList" class="list"></ul>
-      <div id="emptyState" class="empty">No transactions yet. Click “Add transaction”.</div>
-    </section>
-
-    <footer class="footer">
-      Built with <b>C++ backend</b> + <b>Minimal JS frontend</b> (interactive + saved in browser)
-    </footer>
-  </main>
-
-  <!-- Modal -->
-  <div id="modalOverlay" class="modal-overlay hidden" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <div class="modal-head">
-        <h3 id="modalTitle">Add transaction</h3>
-        <button id="btnClose" class="icon-btn" aria-label="Close">✕</button>
-      </div>
-
-      <form id="txForm" class="form">
-        <div class="grid">
-          <label class="field">
-            <span>Type</span>
-            <select id="txType" class="input" required>
-              <option value="INCOME">Income</option>
-              <option value="EXPENSE">Expense</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Amount</span>
-            <input id="txAmount" class="input" type="number" min="0.01" step="0.01" required placeholder="e.g., 19.99" />
-          </label>
-
-          <label class="field">
-            <span>Date</span>
-            <input id="txDate" class="input" type="date" required />
-          </label>
-
-          <label class="field">
-            <span>Currency</span>
-            <input id="txCurrency" class="input" value="CAD" maxlength="3" required />
-          </label>
-        </div>
-
-        <label class="field">
-          <span>Description</span>
-          <input id="txDesc" class="input" maxlength="60" placeholder="e.g., Rent / Salary / Groceries" required />
-        </label>
-
-        <label class="field">
-          <span>Category</span>
-          <input id="txCategory" class="input" maxlength="40" placeholder="e.g., Food / Bills / Salary" />
-        </label>
-
-        <label class="field">
-          <span>Note (optional)</span>
-          <input id="txNote" class="input" maxlength="120" placeholder="Any extra detail..." />
-        </label>
-
-        <div class="form-actions">
-          <button type="button" id="btnCancel" class="btn ghost">Cancel</button>
-          <button type="submit" id="btnSave" class="btn primary">Save</button>
-        </div>
-
-        <p class="hint">
-          This public website saves data in your browser (localStorage).  
-          Optional backend sync can be added later.
-        </p>
-
-        <input type="hidden" id="txId" />
-      </form>
+<header class="header">
+  <div class="brand">
+    <div class="logo">💸</div>
+    <div>
+      <h1>FlowFund</h1>
+      <p class="subtitle">Track income, expenses, and balance</p>
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <button id="addBtn" class="btn primary">+ Add Transaction</button>
+</header>
+
+<main class="container">
+
+  <section class="cards">
+    <div class="card income">
+      <span>Income</span>
+      <h2 id="incomeAmount">$0</h2>
+    </div>
+
+    <div class="card expense">
+      <span>Expenses</span>
+      <h2 id="expenseAmount">$0</h2>
+    </div>
+
+    <div class="card balance">
+      <span>Balance</span>
+      <h2 id="balanceAmount">$0</h2>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Recent Transactions</h3>
+    <ul id="transactionList" class="tx-list"></ul>
+    <p id="emptyState" class="empty">No transactions yet</p>
+  </section>
+
+</main>
+
+<footer>
+  Created by Hetansh • FlowFund
+</footer>
+
+<!-- Modal -->
+<div id="modal" class="modal hidden">
+  <form id="txForm" class="modal-box">
+    <h3 id="modalTitle">Add Transaction</h3>
+
+    <select id="type">
+      <option value="INCOME">Income</option>
+      <option value="EXPENSE">Expense</option>
+    </select>
+
+    <input id="title" placeholder="Title (e.g., Rent, Salary)" required />
+    <input id="amount" type="number" step="0.01" placeholder="Amount" required />
+    <input id="date" type="date" required />
+
+    <div class="modal-actions">
+      <button type="submit" class="btn primary">Save</button>
+      <button type="button" id="cancelBtn" class="btn ghost">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>
