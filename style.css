@@ -60,8 +60,8 @@ body {
 
 /* Logo */
 .logo-img {
-  width: 46px;
-  height: 46px;
+  width: 23px;
+  height: 23px;
   object-fit: contain;
   filter: drop-shadow(0 4px 10px rgba(0,0,0,0.12));
   transition: transform 0.15s ease, filter 0.15s ease;
