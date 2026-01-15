@@ -1,11 +1,10 @@
-/* FlowFund — Frontend (Server-backed with JWT)
-   - Uses C++ backend on Render
-   - Register/Login via prompts
-   - Add/Edit/Delete transactions via API
-   - Each user sees only their own data (private)
+/* FlowFund — Frontend (GitHub Pages) + Backend (Render API)
+   - Register / Login (JWT)
+   - Create + List transactions from API
+   - Summary from API
 */
 
-const API_BASE = "https://budgettracker-2-qmpz.onrender.com"; // ✅ change if needed
+const API_BASE = "https://budgettracker-2-qmpz.onrender.com"; // Render API
 const TOKEN_KEY = "flowfund.jwt.v1";
 
 const $ = (id) => document.getElementById(id);
@@ -37,6 +36,14 @@ const els = {
   searchInput: $("searchInput"),
 };
 
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+function setToken(t) {
+  if (!t) localStorage.removeItem(TOKEN_KEY);
+  else localStorage.setItem(TOKEN_KEY, t);
+}
+
 function todayISO() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -59,16 +66,7 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
-}
-
-function setToken(token) {
-  if (!token) localStorage.removeItem(TOKEN_KEY);
-  else localStorage.setItem(TOKEN_KEY, token);
-}
-
-async function apiFetch(path, { method = "GET", body } = {}) {
+async function api(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -81,181 +79,67 @@ async function apiFetch(path, { method = "GET", body } = {}) {
 
   const text = await res.text();
   let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { raw: text };
-  }
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
   if (!res.ok) {
     const msg =
       data?.error?.message ||
-      data?.message ||
-      `Request failed: ${res.status} ${res.statusText}`;
-    const code = data?.error?.code || "ERROR";
-    const err = new Error(msg);
-    err.code = code;
-    err.status = res.status;
-    throw err;
+      (typeof data === "string" ? data : "Request failed");
+    throw new Error(msg);
   }
-
   return data;
 }
 
-/* ---------------------------
-   Auth UI (no HTML changes)
-----------------------------*/
+/* ---------- Auth UI (prompt-based, minimal) ---------- */
 
-function ensureAuthButtons() {
-  // inject small auth buttons into header-actions
-  const headerActions = document.querySelector(".header-actions");
-  if (!headerActions) return;
+async function ensureLoggedIn() {
+  if (getToken()) return true;
 
-  if (document.getElementById("loginBtn")) return;
+  const choice = prompt(
+    "You are not logged in.\nType 1 to Login, 2 to Register, or Cancel to stop:"
+  );
+  if (choice !== "1" && choice !== "2") return false;
 
-  const loginBtn = document.createElement("button");
-  loginBtn.id = "loginBtn";
-  loginBtn.className = "btn ghost";
-  loginBtn.textContent = "Login";
+  if (choice === "2") {
+    const name = prompt("Name:");
+    const email = prompt("Email:");
+    const password = prompt("Password (min 6 chars):");
+    if (!name || !email || !password) return false;
 
-  const registerBtn = document.createElement("button");
-  registerBtn.id = "registerBtn";
-  registerBtn.className = "btn ghost";
-  registerBtn.textContent = "Register";
-
-  const logoutBtn = document.createElement("button");
-  logoutBtn.id = "logoutBtn";
-  logoutBtn.className = "btn ghost";
-  logoutBtn.textContent = "Logout";
-  logoutBtn.style.display = "none";
-
-  headerActions.prepend(logoutBtn);
-  headerActions.prepend(registerBtn);
-  headerActions.prepend(loginBtn);
-
-  loginBtn.addEventListener("click", async () => {
-    await loginFlow();
-  });
-
-  registerBtn.addEventListener("click", async () => {
-    await registerFlow();
-  });
-
-  logoutBtn.addEventListener("click", () => {
-    setToken("");
-    transactions = [];
-    renderAll();
-    syncAuthButtons();
-    alert("Logged out.");
-  });
-
-  syncAuthButtons();
-}
-
-function syncAuthButtons() {
-  const token = getToken();
-  const loginBtn = document.getElementById("loginBtn");
-  const registerBtn = document.getElementById("registerBtn");
-  const logoutBtn = document.getElementById("logoutBtn");
-  if (!loginBtn || !registerBtn || !logoutBtn) return;
-
-  const loggedIn = !!token;
-  loginBtn.style.display = loggedIn ? "none" : "";
-  registerBtn.style.display = loggedIn ? "none" : "";
-  logoutBtn.style.display = loggedIn ? "" : "none";
-}
-
-async function loginFlow() {
-  const email = prompt("Email:");
-  if (!email) return;
-
-  const password = prompt("Password:");
-  if (!password) return;
-
-  try {
-    const data = await apiFetch("/auth/login", {
-      method: "POST",
-      body: { email, password },
-    });
-    setToken(data.token || "");
-    syncAuthButtons();
-    await loadFromServer();
-    alert("Login successful ✅");
-  } catch (e) {
-    alert(`Login failed: ${e.message}`);
-  }
-}
-
-async function registerFlow() {
-  const name = prompt("Name:");
-  if (!name) return;
-
-  const email = prompt("Email:");
-  if (!email) return;
-
-  const password = prompt("Password (min 6 chars):");
-  if (!password) return;
-
-  try {
-    const data = await apiFetch("/auth/register", {
+    const out = await api("/auth/register", {
       method: "POST",
       body: { name, email, password },
     });
-    setToken(data.token || "");
-    syncAuthButtons();
-    await loadFromServer();
-    alert("Registered & logged in ✅");
-  } catch (e) {
-    alert(`Register failed: ${e.message}`);
-  }
-}
-
-/* ---------------------------
-   UI Modal
-----------------------------*/
-
-function openModal(mode, tx) {
-  els.modalBackdrop.classList.remove("hidden");
-  els.modalBackdrop.setAttribute("aria-hidden", "false");
-
-  els.editId.value = tx?.id ?? "";
-  els.modalTitle.textContent = mode === "edit" ? "Edit Transaction" : "Add Transaction";
-
-  els.txType.value = tx?.type || "INCOME";
-  els.txAmount.value = tx?.amount ?? "";
-  els.txDate.value = tx?.date || todayISO();
-  els.txCategory.value = tx?.category || "";
-  els.txTitle.value = tx?.title || "";
-  els.txNote.value = tx?.note || "";
-
-  setTimeout(() => els.txAmount.focus(), 0);
-}
-
-function closeModal() {
-  els.modalBackdrop.classList.add("hidden");
-  els.modalBackdrop.setAttribute("aria-hidden", "true");
-  els.form.reset();
-  els.editId.value = "";
-}
-
-/* ---------------------------
-   State + Rendering
-----------------------------*/
-
-let transactions = []; // server-backed list
-
-function computeSummary(list) {
-  let income = 0;
-  let expense = 0;
-
-  for (const t of list) {
-    const amt = Number(t.amount || 0);
-    if (t.type === "INCOME") income += amt;
-    else expense += amt;
+    setToken(out.token);
+    alert("Registered & logged in!");
+    return true;
   }
 
-  return { income, expense, balance: income - expense };
+  // login
+  const email = prompt("Email:");
+  const password = prompt("Password:");
+  if (!email || !password) return false;
+
+  const out = await api("/auth/login", {
+    method: "POST",
+    body: { email, password },
+  });
+  setToken(out.token);
+  alert("Logged in!");
+  return true;
 }
+
+function logout() {
+  setToken("");
+  alert("Logged out.");
+  // Clear UI
+  transactions = [];
+  renderAll();
+}
+
+/* ---------- Data / Render ---------- */
+
+let transactions = [];
 
 function applyFilters(list) {
   const type = els.typeFilter.value;
@@ -269,11 +153,10 @@ function applyFilters(list) {
   });
 }
 
-function renderCards() {
-  const { income, expense, balance } = computeSummary(transactions);
-  els.incomeAmount.textContent = formatMoney(income);
-  els.expenseAmount.textContent = formatMoney(expense);
-  els.balanceAmount.textContent = formatMoney(balance);
+function renderCards(summary) {
+  els.incomeAmount.textContent = formatMoney(summary.income);
+  els.expenseAmount.textContent = formatMoney(summary.expense);
+  els.balanceAmount.textContent = formatMoney(summary.balance);
 }
 
 function renderList() {
@@ -300,13 +183,16 @@ function renderList() {
     li.innerHTML = `
       <div>
         <div class="tx-title">${escapeHtml(t.title)}</div>
-        <div class="tx-meta">${escapeHtml(t.date)} • ${escapeHtml(t.category)}</div>
+        <div class="tx-meta">${escapeHtml(t.date)} • ${escapeHtml(
+      t.category
+    )}</div>
       </div>
 
       <div class="tx-right">
-        <div class="tx-amount ${amountClass}">${sign}${formatMoney(t.amount).slice(1)}</div>
+        <div class="tx-amount ${amountClass}">${sign}${formatMoney(
+      t.amount
+    ).slice(1)}</div>
         <div class="tx-actions">
-          <button class="icon-btn" data-action="edit" data-id="${t.id}">Edit</button>
           <button class="icon-btn" data-action="delete" data-id="${t.id}">Delete</button>
         </div>
       </div>
@@ -316,99 +202,62 @@ function renderList() {
   }
 }
 
-function renderAll() {
-  renderCards();
+async function refreshFromServer() {
+  const ok = await ensureLoggedIn();
+  if (!ok) return;
+
+  const [txOut, summary] = await Promise.all([
+    api("/transactions"),
+    api("/summary"),
+  ]);
+
+  transactions = txOut.items || [];
+  renderCards(summary);
   renderList();
 }
 
-/* ---------------------------
-   Server operations
-----------------------------*/
+function openModal(mode) {
+  els.modalBackdrop.classList.remove("hidden");
+  els.modalBackdrop.setAttribute("aria-hidden", "false");
 
-async function loadFromServer() {
-  if (!getToken()) {
-    transactions = [];
-    renderAll();
-    return;
-  }
+  els.editId.value = "";
+  els.modalTitle.textContent = mode === "edit" ? "Edit Transaction" : "Add Transaction";
 
-  // Get list
-  const txData = await apiFetch("/transactions");
-  transactions = (txData.items || []).map((t) => ({
-    id: String(t.id),
-    type: t.type,
-    amount: Number(t.amount),
-    date: t.date,
-    category: t.category,
-    title: t.title,
-    note: t.note || "",
-    currency: t.currency || "CAD",
-  }));
+  els.txType.value = "INCOME";
+  els.txAmount.value = "";
+  els.txDate.value = todayISO();
+  els.txCategory.value = "";
+  els.txTitle.value = "";
+  els.txNote.value = "";
 
-  // Optionally you can also call /summary, but UI already calculates from list
-  renderAll();
+  setTimeout(() => els.txAmount.focus(), 0);
+}
+
+function closeModal() {
+  els.modalBackdrop.classList.add("hidden");
+  els.modalBackdrop.setAttribute("aria-hidden", "true");
+  els.form.reset();
+  els.editId.value = "";
 }
 
 async function createTransaction(tx) {
-  const body = {
-    type: tx.type,
-    amount: Number(tx.amount),
-    date: tx.date,
-    category: tx.category,
-    title: tx.title,
-    note: tx.note || "",
-    currency: tx.currency || "CAD",
-  };
-
-  const data = await apiFetch("/transactions", { method: "POST", body });
-  return String(data.id);
+  await api("/transactions", { method: "POST", body: tx });
+  await refreshFromServer();
 }
 
-async function updateTransaction(id, tx) {
-  const body = {
-    type: tx.type,
-    amount: Number(tx.amount),
-    date: tx.date,
-    category: tx.category,
-    title: tx.title,
-    note: tx.note || "",
-    currency: tx.currency || "CAD",
-  };
-
-  await apiFetch(`/transactions/${id}`, { method: "PUT", body });
-}
-
-async function deleteTransactionOnServer(id) {
-  await apiFetch(`/transactions/${id}`, { method: "DELETE" });
-}
-
-/* ---------------------------
-   Events
-----------------------------*/
+/* ---------- Events ---------- */
 
 els.addBtn.addEventListener("click", async () => {
-  if (!getToken()) {
-    const go = confirm("You must login to save private transactions.\n\nPress OK to Login.");
-    if (go) await loginFlow();
-    if (!getToken()) return;
-  }
+  const ok = await ensureLoggedIn();
+  if (!ok) return;
   openModal("add");
 });
 
-els.resetBtn.addEventListener("click", async () => {
-  // Since server data is per-user, "Reset Demo" doesn't really apply.
-  // We'll interpret it as "logout + clear UI" (safe + simple).
-  if (getToken()) {
-    const ok = confirm("This will log you out (your server data stays safe in DB). Continue?");
-    if (!ok) return;
-    setToken("");
-    transactions = [];
-    syncAuthButtons();
-    renderAll();
-    return;
-  }
-  alert("Nothing to reset. Login to start using FlowFund.");
-});
+// "Reset Demo" no longer makes sense once you use the server.
+// We'll repurpose it as Logout for a clean demo.
+els.resetBtn.textContent = "Logout";
+els.resetBtn.title = "Logs out from this browser";
+els.resetBtn.addEventListener("click", logout);
 
 els.closeModalBtn.addEventListener("click", closeModal);
 els.cancelBtn.addEventListener("click", closeModal);
@@ -418,22 +267,15 @@ els.modalBackdrop.addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !els.modalBackdrop.classList.contains("hidden")) closeModal();
+  if (e.key === "Escape" && !els.modalBackdrop.classList.contains("hidden"))
+    closeModal();
 });
 
 els.form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  if (!getToken()) {
-    alert("You are not logged in.");
-    closeModal();
-    return;
-  }
-
-  const id = els.editId.value || "";
   const type = els.txType.value;
   const amount = Number(els.txAmount.value);
-
   const date = els.txDate.value;
   const category = els.txCategory.value.trim();
   const title = els.txTitle.value.trim();
@@ -444,20 +286,11 @@ els.form.addEventListener("submit", async (e) => {
     return;
   }
 
-  const tx = { id, type, amount, date, category, title, note, currency: "CAD" };
-
   try {
-    if (id) {
-      await updateTransaction(id, tx);
-    } else {
-      const newId = await createTransaction(tx);
-      tx.id = newId;
-    }
-
-    await loadFromServer();
+    await createTransaction({ type, amount, date, category, title, note });
     closeModal();
   } catch (err) {
-    alert(`Save failed: ${err.message}`);
+    alert(err.message || "Failed to save transaction");
   }
 });
 
@@ -468,36 +301,22 @@ els.txList.addEventListener("click", async (e) => {
   const action = btn.dataset.action;
   const id = btn.dataset.id;
 
-  const tx = transactions.find((t) => t.id === id);
-
-  if (action === "edit" && tx) {
-    openModal("edit", tx);
-    return;
-  }
-
   if (action === "delete") {
-    const ok = confirm("Delete this transaction?");
-    if (!ok) return;
-
-    try {
-      await deleteTransactionOnServer(id);
-      await loadFromServer();
-    } catch (err) {
-      alert(`Delete failed: ${err.message}`);
-    }
+    alert(
+      "Delete is not implemented on the backend yet.\n\nIf you want, I can add:\nDELETE /transactions/:id"
+    );
   }
 });
 
 els.typeFilter.addEventListener("change", renderList);
 els.searchInput.addEventListener("input", renderList);
 
-/* ---------------------------
-   Init
-----------------------------*/
-
-ensureAuthButtons();
-loadFromServer().catch((e) => {
-  // If backend is sleeping on free Render, first request may fail.
-  console.error(e);
-  renderAll();
+/* Init */
+refreshFromServer().catch(() => {
+  // If not logged in, show zero summary UI
+  els.incomeAmount.textContent = "$0.00";
+  els.expenseAmount.textContent = "$0.00";
+  els.balanceAmount.textContent = "$0.00";
+  transactions = [];
+  renderList();
 });
