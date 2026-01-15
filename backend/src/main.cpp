@@ -1,5 +1,5 @@
 #include "httplib.h"
-#include "json.hpp"
+#include "nlohmann/json.hpp"
 
 #include "Env.hpp"
 #include "Db.hpp"
@@ -63,6 +63,10 @@ static std::string getDatabaseUrlOrEmpty() {
   return Env::firstOf({"DATABASE_URL", "POSTGRES_URL", "RENDER_DATABASE_URL"}, "");
 }
 
+static void clearRes(PGresult* r) {
+  if (r) PQclear(r);
+}
+
 static long requireAuth(const httplib::Request& req,
                         httplib::Response& res,
                         const std::string& jwtSecret,
@@ -88,10 +92,6 @@ static long requireAuth(const httplib::Request& req,
   return *userId;
 }
 
-static void clearRes(PGresult* r) {
-  if (r) PQclear(r);
-}
-
 int main() {
   try {
     const int port = Env::getInt("PORT", 10000);
@@ -114,29 +114,25 @@ int main() {
 
     Db db(dbUrl);
 
-    // Migrations (local then /app)
     std::string mig = readFile("migrations.sql");
     if (mig.empty()) mig = readFile("/app/migrations.sql");
     if (mig.empty()) {
-      std::cerr << "migrations.sql not found (expected ./migrations.sql or /app/migrations.sql)\n";
+      std::cerr << "migrations.sql not found\n";
       return 1;
     }
     db.execOrThrow(mig);
 
     httplib::Server srv;
 
-    // Preflight
     srv.Options(R"(.*)", [&](const httplib::Request&, httplib::Response& res) {
       addCors(res, corsOrigin);
       res.status = 204;
     });
 
-    // Health
     srv.Get("/health", [&](const httplib::Request&, httplib::Response& res) {
       jsonOk(res, {{"ok", true}}, corsOrigin);
     });
 
-    // Register
     srv.Post("/auth/register", [&](const httplib::Request& req, httplib::Response& res) {
       json body;
       if (!parseJsonBody(req, body)) {
@@ -172,7 +168,6 @@ int main() {
       jsonOk(res, {{"token", token}}, corsOrigin);
     });
 
-    // Login
     srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
       json body;
       if (!parseJsonBody(req, body)) {
@@ -208,7 +203,6 @@ int main() {
       jsonOk(res, {{"token", token}}, corsOrigin);
     });
 
-    // Create transaction
     srv.Post("/transactions", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
@@ -260,7 +254,6 @@ int main() {
       jsonOk(res, {{"id", id}}, corsOrigin);
     });
 
-    // List transactions
     srv.Get("/transactions", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
@@ -298,7 +291,6 @@ int main() {
       jsonOk(res, {{"items", items}}, corsOrigin);
     });
 
-    // Summary
     srv.Get("/summary", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
@@ -331,8 +323,6 @@ int main() {
 
     std::cout << "FlowFund API listening on " << host << ":" << port << "\n";
     std::cout << "CORS_ORIGIN=" << corsOrigin << "\n";
-
-    // ✅ FIXED: port must be int
     srv.listen(host.c_str(), port);
 
   } catch (const std::exception& e) {

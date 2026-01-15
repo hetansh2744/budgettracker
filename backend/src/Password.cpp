@@ -1,98 +1,111 @@
 #include "Password.hpp"
+
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
+#include <cstring>
 #include <sstream>
-#include <iomanip>
+#include <stdexcept>
 #include <vector>
 
-static std::string toHex(const unsigned char* data, size_t len) {
-  std::ostringstream oss;
+static std::string hexEncode(const unsigned char* data, size_t len) {
+  static const char* kHex = "0123456789abcdef";
+  std::string out;
+  out.reserve(len * 2);
   for (size_t i = 0; i < len; i++) {
-    oss << std::hex << std::setw(2) << std::setfill('0') << (int)data[i];
-  }
-  return oss.str();
-}
-
-static std::vector<unsigned char> fromHex(const std::string& hex) {
-  std::vector<unsigned char> out;
-  if (hex.size() % 2 != 0) return out;
-  out.reserve(hex.size() / 2);
-  for (size_t i = 0; i < hex.size(); i += 2) {
-    unsigned int byte = 0;
-    std::stringstream ss;
-    ss << std::hex << hex.substr(i, 2);
-    ss >> byte;
-    out.push_back((unsigned char)byte);
+    unsigned char b = data[i];
+    out.push_back(kHex[b >> 4]);
+    out.push_back(kHex[b & 0x0F]);
   }
   return out;
 }
 
-// Format:
-// pbkdf2_sha256$ITER$saltHex$hashHex
+static std::vector<unsigned char> hexDecode(const std::string& hex) {
+  if (hex.size() % 2 != 0) throw std::runtime_error("hex decode: odd length");
+  auto val = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+  };
+
+  std::vector<unsigned char> out(hex.size() / 2);
+  for (size_t i = 0; i < out.size(); i++) {
+    int hi = val(hex[2 * i]);
+    int lo = val(hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) throw std::runtime_error("hex decode: bad char");
+    out[i] = static_cast<unsigned char>((hi << 4) | lo);
+  }
+  return out;
+}
+
+static bool constantTimeEq(const std::vector<unsigned char>& a,
+                           const std::vector<unsigned char>& b) {
+  if (a.size() != b.size()) return false;
+  unsigned char diff = 0;
+  for (size_t i = 0; i < a.size(); i++) diff |= (a[i] ^ b[i]);
+  return diff == 0;
+}
+
+// Stored format: pbkdf2$<iters>$<saltHex>$<dkHex>
 std::string Password::hash(const std::string& password) {
-  const int iter = 120000;
+  const int iters = 120000;
   unsigned char salt[16];
   if (RAND_bytes(salt, sizeof(salt)) != 1) {
     throw std::runtime_error("RAND_bytes failed");
   }
 
-  unsigned char out[32];
-  if (PKCS5_PBKDF2_HMAC(
-        password.c_str(), (int)password.size(),
-        salt, (int)sizeof(salt),
-        iter,
-        EVP_sha256(),
-        (int)sizeof(out),
-        out) != 1) {
+  unsigned char dk[32];
+  if (PKCS5_PBKDF2_HMAC(password.c_str(),
+                        static_cast<int>(password.size()),
+                        salt, sizeof(salt),
+                        iters,
+                        EVP_sha256(),
+                        sizeof(dk),
+                        dk) != 1) {
     throw std::runtime_error("PBKDF2 failed");
   }
 
   std::ostringstream oss;
-  oss << "pbkdf2_sha256$" << iter << "$"
-      << toHex(salt, sizeof(salt)) << "$"
-      << toHex(out, sizeof(out));
+  oss << "pbkdf2$" << iters << "$" << hexEncode(salt, sizeof(salt)) << "$"
+      << hexEncode(dk, sizeof(dk));
   return oss.str();
 }
 
 bool Password::verify(const std::string& password, const std::string& stored) {
-  // Split by $
-  size_t p1 = stored.find('$');
-  if (p1 == std::string::npos) return false;
-  size_t p2 = stored.find('$', p1 + 1);
-  if (p2 == std::string::npos) return false;
-  size_t p3 = stored.find('$', p2 + 1);
-  if (p3 == std::string::npos) return false;
+  // split by $
+  std::vector<std::string> parts;
+  std::string cur;
+  for (char c : stored) {
+    if (c == '$') { parts.push_back(cur); cur.clear(); }
+    else cur.push_back(c);
+  }
+  parts.push_back(cur);
 
-  std::string alg = stored.substr(0, p1);
-  std::string iterStr = stored.substr(p1 + 1, p2 - (p1 + 1));
-  std::string saltHex = stored.substr(p2 + 1, p3 - (p2 + 1));
-  std::string hashHex = stored.substr(p3 + 1);
+  if (parts.size() != 4 || parts[0] != "pbkdf2") return false;
 
-  if (alg != "pbkdf2_sha256") return false;
+  int iters = 0;
+  try { iters = std::stoi(parts[1]); } catch (...) { return false; }
 
-  int iter = 0;
-  try { iter = std::stoi(iterStr); } catch (...) { return false; }
-  if (iter < 10000) return false;
-
-  auto salt = fromHex(saltHex);
-  auto expected = fromHex(hashHex);
-  if (salt.empty() || expected.empty()) return false;
-
-  std::vector<unsigned char> out(expected.size());
-  if (PKCS5_PBKDF2_HMAC(
-        password.c_str(), (int)password.size(),
-        salt.data(), (int)salt.size(),
-        iter,
-        EVP_sha256(),
-        (int)out.size(),
-        out.data()) != 1) {
+  std::vector<unsigned char> salt;
+  std::vector<unsigned char> dkStored;
+  try {
+    salt = hexDecode(parts[2]);
+    dkStored = hexDecode(parts[3]);
+  } catch (...) {
     return false;
   }
 
-  // Constant-time compare
-  if (out.size() != expected.size()) return false;
-  unsigned char diff = 0;
-  for (size_t i = 0; i < out.size(); i++) diff |= (out[i] ^ expected[i]);
-  return diff == 0;
+  std::vector<unsigned char> dk(dkStored.size());
+  if (PKCS5_PBKDF2_HMAC(password.c_str(),
+                        static_cast<int>(password.size()),
+                        salt.data(), static_cast<int>(salt.size()),
+                        iters,
+                        EVP_sha256(),
+                        static_cast<int>(dk.size()),
+                        dk.data()) != 1) {
+    return false;
+  }
+
+  return constantTimeEq(dk, dkStored);
 }

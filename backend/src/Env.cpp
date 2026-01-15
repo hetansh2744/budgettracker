@@ -19,7 +19,7 @@ int Env::getInt(const std::string& key, int def) {
 std::string Env::firstOf(std::initializer_list<std::string> keys,
                          const std::string& def) {
   for (const auto& k : keys) {
-    auto v = get(k, "");
+    auto v = get(k);
     if (!v.empty()) return v;
   }
   return def;
