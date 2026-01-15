@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS transactions (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('INCOME', 'EXPENSE')),
-  amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+  type TEXT NOT NULL CHECK (type IN ('INCOME','EXPENSE')),
+  amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
   currency TEXT NOT NULL DEFAULT 'CAD',
   tx_date DATE NOT NULL,
   category TEXT NOT NULL,
@@ -20,4 +20,4 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_user_date
-ON transactions(user_id, tx_date DESC, id DESC);
+  ON transactions(user_id, tx_date DESC);
