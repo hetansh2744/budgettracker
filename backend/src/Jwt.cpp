@@ -1,6 +1,6 @@
 #include "Jwt.hpp"
 
-#include <nlohmann/json.hpp>
+#include "nlohmann/json.hpp"
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 
@@ -11,26 +11,21 @@
 
 using json = nlohmann::json;
 
-static std::string b64UrlEncodeRaw(const unsigned char* data, size_t len) {
-  // Base64 encode -> then URL-safe transform
-  int outLen = 4 * ((int(len) + 2) / 3);
+static std::string b64UrlEncode(const std::string& in) {
+  std::vector<unsigned char> bytes(in.begin(), in.end());
+  int outLen = 4 * ((static_cast<int>(bytes.size()) + 2) / 3);
   std::string out(outLen, '\0');
 
-  EVP_EncodeBlock(reinterpret_cast<unsigned char*>(&out[0]), data,
-                  static_cast<int>(len));
+  EVP_EncodeBlock(reinterpret_cast<unsigned char*>(&out[0]),
+                  bytes.data(),
+                  static_cast<int>(bytes.size()));
 
   for (char& c : out) {
     if (c == '+') c = '-';
     else if (c == '/') c = '_';
   }
-
   while (!out.empty() && out.back() == '=') out.pop_back();
   return out;
-}
-
-static std::string b64UrlEncode(const std::string& in) {
-  return b64UrlEncodeRaw(reinterpret_cast<const unsigned char*>(in.data()),
-                         in.size());
 }
 
 static std::string b64UrlDecodeToString(const std::string& in) {
@@ -43,14 +38,14 @@ static std::string b64UrlDecodeToString(const std::string& in) {
   while (b64.size() % 4 != 0) b64.push_back('=');
 
   std::vector<unsigned char> out((b64.size() * 3) / 4);
+
   int n = EVP_DecodeBlock(out.data(),
                           reinterpret_cast<const unsigned char*>(b64.data()),
                           static_cast<int>(b64.size()));
   if (n < 0) return "";
 
-  // trim padding bytes
   int pad = 0;
-  if (!b64.empty() && b64.back() == '=') pad++;
+  if (!b64.empty() && b64[b64.size() - 1] == '=') pad++;
   if (b64.size() > 1 && b64[b64.size() - 2] == '=') pad++;
 
   out.resize(static_cast<size_t>(n - pad));
@@ -74,9 +69,7 @@ static std::string hmacSha256(const std::string& data,
 static bool constantTimeEq(const std::string& a, const std::string& b) {
   if (a.size() != b.size()) return false;
   unsigned char diff = 0;
-  for (size_t i = 0; i < a.size(); i++) {
-    diff |= static_cast<unsigned char>(a[i] ^ b[i]);
-  }
+  for (size_t i = 0; i < a.size(); i++) diff |= (a[i] ^ b[i]);
   return diff == 0;
 }
 
@@ -84,7 +77,7 @@ std::string Jwt::signUser(long userId, const std::string& secret,
                           int ttlSeconds) {
   json header = {{"alg", "HS256"}, {"typ", "JWT"}};
 
-  std::time_t now = std::time(nullptr);
+  const std::time_t now = std::time(nullptr);
   json payload = {
       {"sub", std::to_string(userId)},
       {"iat", static_cast<long>(now)},
