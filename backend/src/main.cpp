@@ -8,47 +8,91 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <libpq-fe.h>
+#include <string>
+#include <cstdlib>
 
 using json = nlohmann::json;
 
 static std::string readFile(const std::string& path) {
   std::ifstream f(path);
+  if (!f.is_open()) return "";
   std::stringstream ss;
   ss << f.rdbuf();
   return ss.str();
 }
 
 static void addCors(httplib::Response& res, const std::string& origin) {
+  // If origin is "*", allow any origin
   if (origin.empty()) return;
+
   res.set_header("Access-Control-Allow-Origin", origin.c_str());
   res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 }
 
-static void jsonError(httplib::Response& res, int status, const std::string& code, const std::string& msg, const std::string& origin) {
+static void jsonOk(httplib::Response& res, const json& body, const std::string& origin) {
   addCors(res, origin);
-  res.status = status;
-  res.set_content(json({{"error", {{"code", code}, {"message", msg}}}}).dump(), "application/json");
+  res.status = 200;
+  res.set_content(body.dump(), "application/json");
 }
 
-static long requireAuth(const httplib::Request& req, httplib::Response& res, const std::string& jwtSecret, const std::string& origin) {
+static void jsonError(httplib::Response& res,
+                      int status,
+                      const std::string& code,
+                      const std::string& msg,
+                      const std::string& origin) {
+  addCors(res, origin);
+  res.status = status;
+  res.set_content(json({{"error", {{"code", code}, {"message", msg}}}}).dump(),
+                  "application/json");
+}
+
+static bool parseJsonBody(const httplib::Request& req, json& out) {
+  out = json::parse(req.body, nullptr, false);
+  return !out.is_discarded();
+}
+
+static std::string ensureSslMode(const std::string& url) {
+  // If already has sslmode, do nothing.
+  if (url.find("sslmode=") != std::string::npos) return url;
+
+  // Many managed DBs require SSL; adding this is usually safe.
+  std::string out = url;
+  if (out.find('?') == std::string::npos) out += "?sslmode=require";
+  else out += "&sslmode=require";
+  return out;
+}
+
+static std::string getDatabaseUrlOrEmpty() {
+  // Render / other platforms may use different names
+  std::string dbUrl = Env::firstOf({"DATABASE_URL", "POSTGRES_URL", "RENDER_DATABASE_URL"}, "");
+  return dbUrl;
+}
+
+static long requireAuth(const httplib::Request& req,
+                        httplib::Response& res,
+                        const std::string& jwtSecret,
+                        const std::string& origin) {
   auto it = req.headers.find("Authorization");
   if (it == req.headers.end()) {
     jsonError(res, 401, "UNAUTHORIZED", "Missing Authorization header", origin);
     return 0;
   }
+
   const std::string prefix = "Bearer ";
   const std::string& h = it->second;
+
   if (h.rfind(prefix, 0) != 0) {
     jsonError(res, 401, "UNAUTHORIZED", "Invalid Authorization header", origin);
     return 0;
   }
+
   auto userId = Jwt::verifyAndGetUserId(h.substr(prefix.size()), jwtSecret);
   if (!userId) {
     jsonError(res, 401, "UNAUTHORIZED", "Invalid or expired token", origin);
     return 0;
   }
+
   return *userId;
 }
 
@@ -57,11 +101,12 @@ int main() {
     const int port = Env::getInt("PORT", 10000);
     const std::string host = "0.0.0.0";
 
-    const std::string dbUrl = Env::get("DATABASE_URL");
+    std::string dbUrl = getDatabaseUrlOrEmpty();
     if (dbUrl.empty()) {
-      std::cerr << "DATABASE_URL is required\n";
+      std::cerr << "DATABASE_URL is required (or POSTGRES_URL / RENDER_DATABASE_URL)\n";
       return 1;
     }
+    dbUrl = ensureSslMode(dbUrl);
 
     const std::string jwtSecret = Env::get("JWT_SECRET");
     if (jwtSecret.size() < 16) {
@@ -69,15 +114,23 @@ int main() {
       return 1;
     }
 
-    // Put your frontend URL here on Render (or use "*" for quick testing)
+    // For quick testing you can set "*" (but in production set your frontend domain).
     const std::string corsOrigin = Env::get("CORS_ORIGIN", "*");
 
     Db db(dbUrl);
-    db.execOrThrow(readFile("migrations.sql"));
+
+    // Run migrations: try local file first, then Docker path fallback.
+    std::string mig = readFile("migrations.sql");
+    if (mig.empty()) mig = readFile("/app/migrations.sql");
+    if (mig.empty()) {
+      std::cerr << "migrations.sql not found (expected ./migrations.sql or /app/migrations.sql)\n";
+      return 1;
+    }
+    db.execOrThrow(mig);
 
     httplib::Server srv;
 
-    // OPTIONS preflight
+    // Preflight
     srv.Options(R"(.*)", [&](const httplib::Request&, httplib::Response& res) {
       addCors(res, corsOrigin);
       res.status = 204;
@@ -85,21 +138,23 @@ int main() {
 
     // Health
     srv.Get("/health", [&](const httplib::Request&, httplib::Response& res) {
-      addCors(res, corsOrigin);
-      res.set_content(R"({"ok":true})", "application/json");
+      jsonOk(res, {{"ok", true}}, corsOrigin);
     });
 
     // Register
     srv.Post("/auth/register", [&](const httplib::Request& req, httplib::Response& res) {
-      auto body = json::parse(req.body, nullptr, false);
-      if (body.is_discarded()) return jsonError(res, 400, "BAD_JSON", "Invalid JSON", corsOrigin);
+      json body;
+      if (!parseJsonBody(req, body)) {
+        return jsonError(res, 400, "BAD_JSON", "Invalid JSON", corsOrigin);
+      }
 
       std::string name = body.value("name", "");
       std::string email = body.value("email", "");
       std::string password = body.value("password", "");
 
       if (name.empty() || email.empty() || password.size() < 6) {
-        return jsonError(res, 400, "VALIDATION_ERROR", "name, email, password(>=6) required", corsOrigin);
+        return jsonError(res, 400, "VALIDATION_ERROR",
+                         "name, email, password(>=6) required", corsOrigin);
       }
 
       std::string pwHash = Password::hash(password);
@@ -111,24 +166,27 @@ int main() {
 
       if (!r || PQresultStatus(r) != PGRES_TUPLES_OK) {
         if (r) PQclear(r);
-        return jsonError(res, 400, "REGISTER_FAILED", "Could not register (email may already exist)", corsOrigin);
+        return jsonError(res, 400, "REGISTER_FAILED",
+                         "Could not register (email may already exist)", corsOrigin);
       }
 
       long userId = std::atol(PQgetvalue(r, 0, 0));
       PQclear(r);
 
       std::string token = Jwt::signUser(userId, jwtSecret, 60 * 60 * 24);
-      addCors(res, corsOrigin);
-      res.set_content(json({{"token", token}}).dump(), "application/json");
+      jsonOk(res, {{"token", token}}, corsOrigin);
     });
 
     // Login
     srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
-      auto body = json::parse(req.body, nullptr, false);
-      if (body.is_discarded()) return jsonError(res, 400, "BAD_JSON", "Invalid JSON", corsOrigin);
+      json body;
+      if (!parseJsonBody(req, body)) {
+        return jsonError(res, 400, "BAD_JSON", "Invalid JSON", corsOrigin);
+      }
 
       std::string email = body.value("email", "");
       std::string password = body.value("password", "");
+
       if (email.empty() || password.empty()) {
         return jsonError(res, 400, "VALIDATION_ERROR", "email and password required", corsOrigin);
       }
@@ -152,8 +210,7 @@ int main() {
       }
 
       std::string token = Jwt::signUser(userId, jwtSecret, 60 * 60 * 24);
-      addCors(res, corsOrigin);
-      res.set_content(json({{"token", token}}).dump(), "application/json");
+      jsonOk(res, {{"token", token}}, corsOrigin);
     });
 
     // Create transaction
@@ -161,8 +218,10 @@ int main() {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
 
-      auto body = json::parse(req.body, nullptr, false);
-      if (body.is_discarded()) return jsonError(res, 400, "BAD_JSON", "Invalid JSON", corsOrigin);
+      json body;
+      if (!parseJsonBody(req, body)) {
+        return jsonError(res, 400, "BAD_JSON", "Invalid JSON", corsOrigin);
+      }
 
       std::string type = body.value("type", "");
       double amount = body.value("amount", 0.0);
@@ -172,8 +231,14 @@ int main() {
       std::string note = body.value("note", "");
       std::string currency = body.value("currency", "CAD");
 
-      if ((type != "INCOME" && type != "EXPENSE") || amount <= 0 || date.empty() || category.empty() || title.empty()) {
-        return jsonError(res, 400, "VALIDATION_ERROR", "type, amount>0, date, category, title required", corsOrigin);
+      if ((type != "INCOME" && type != "EXPENSE") ||
+          amount <= 0 ||
+          date.empty() ||
+          category.empty() ||
+          title.empty()) {
+        return jsonError(res, 400, "VALIDATION_ERROR",
+                         "type(INCOME/EXPENSE), amount>0, date, category, title required",
+                         corsOrigin);
       }
 
       std::string userStr = std::to_string(userId);
@@ -197,11 +262,10 @@ int main() {
       long id = std::atol(PQgetvalue(r, 0, 0));
       PQclear(r);
 
-      addCors(res, corsOrigin);
-      res.set_content(json({{"id", id}}).dump(), "application/json");
+      jsonOk(res, {{"id", id}}, corsOrigin);
     });
 
-    // List transactions (owned by user)
+    // List transactions
     srv.Get("/transactions", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
@@ -224,20 +288,19 @@ int main() {
       int n = PQntuples(r);
       for (int i = 0; i < n; i++) {
         items.push_back({
-          {"id", std::atol(PQgetvalue(r,i,0))},
-          {"type", PQgetvalue(r,i,1)},
-          {"amount", std::stod(PQgetvalue(r,i,2))},
-          {"currency", PQgetvalue(r,i,3)},
-          {"date", PQgetvalue(r,i,4)},
-          {"category", PQgetvalue(r,i,5)},
-          {"title", PQgetvalue(r,i,6)},
-          {"note", PQgetvalue(r,i,7)}
+          {"id", std::atol(PQgetvalue(r, i, 0))},
+          {"type", PQgetvalue(r, i, 1)},
+          {"amount", std::stod(PQgetvalue(r, i, 2))},
+          {"currency", PQgetvalue(r, i, 3)},
+          {"date", PQgetvalue(r, i, 4)},
+          {"category", PQgetvalue(r, i, 5)},
+          {"title", PQgetvalue(r, i, 6)},
+          {"note", PQgetvalue(r, i, 7)}
         });
       }
       PQclear(r);
 
-      addCors(res, corsOrigin);
-      res.set_content(json({{"items", items}}).dump(), "application/json");
+      jsonOk(res, {{"items", items}}, corsOrigin);
     });
 
     // Summary
@@ -264,16 +327,17 @@ int main() {
       double expense = std::stod(PQgetvalue(r, 0, 1));
       PQclear(r);
 
-      addCors(res, corsOrigin);
-      res.set_content(json({
+      jsonOk(res, {
         {"income", income},
         {"expense", expense},
         {"balance", income - expense}
-      }).dump(), "application/json");
+      }, corsOrigin);
     });
 
     std::cout << "FlowFund API listening on " << host << ":" << port << "\n";
-    srv.listen(host.c_str(), port);
+    std::cout << "CORS_ORIGIN=" << corsOrigin << "\n";
+
+    srv.listen(host.c_str(), port.c_str());
 
   } catch (const std::exception& e) {
     std::cerr << "Fatal: " << e.what() << "\n";

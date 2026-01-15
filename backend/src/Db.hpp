@@ -10,7 +10,8 @@ public:
   Db(const Db&) = delete;
   Db& operator=(const Db&) = delete;
 
-  PGconn* conn() const { return m_conn; }
+  PGconn* conn() { return m_conn; }
+
   void execOrThrow(const std::string& sql);
 
 private:
