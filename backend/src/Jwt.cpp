@@ -1,6 +1,7 @@
 #include "Jwt.hpp"
 
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
+#include <openssl/evp.h>
 #include <openssl/hmac.h>
 
 #include <ctime>
@@ -10,23 +11,31 @@
 
 using json = nlohmann::json;
 
-static std::string b64UrlEncode(const std::string& in) {
-  std::vector<unsigned char> bytes(in.begin(), in.end());
-  int outLen = 4 * ((int(bytes.size()) + 2) / 3);
+static std::string b64UrlEncodeRaw(const unsigned char* data, size_t len) {
+  // Base64 encode -> then URL-safe transform
+  int outLen = 4 * ((int(len) + 2) / 3);
   std::string out(outLen, '\0');
-  EVP_EncodeBlock(reinterpret_cast<unsigned char*>(&out[0]), bytes.data(),
-                  static_cast<int>(bytes.size()));
+
+  EVP_EncodeBlock(reinterpret_cast<unsigned char*>(&out[0]), data,
+                  static_cast<int>(len));
 
   for (char& c : out) {
     if (c == '+') c = '-';
     else if (c == '/') c = '_';
   }
+
   while (!out.empty() && out.back() == '=') out.pop_back();
   return out;
 }
 
+static std::string b64UrlEncode(const std::string& in) {
+  return b64UrlEncodeRaw(reinterpret_cast<const unsigned char*>(in.data()),
+                         in.size());
+}
+
 static std::string b64UrlDecodeToString(const std::string& in) {
   std::string b64 = in;
+
   for (char& c : b64) {
     if (c == '-') c = '+';
     else if (c == '_') c = '/';
@@ -38,10 +47,13 @@ static std::string b64UrlDecodeToString(const std::string& in) {
                           reinterpret_cast<const unsigned char*>(b64.data()),
                           static_cast<int>(b64.size()));
   if (n < 0) return "";
+
+  // trim padding bytes
   int pad = 0;
-  if (!b64.empty() && b64[b64.size() - 1] == '=') pad++;
+  if (!b64.empty() && b64.back() == '=') pad++;
   if (b64.size() > 1 && b64[b64.size() - 2] == '=') pad++;
-  out.resize(n - pad);
+
+  out.resize(static_cast<size_t>(n - pad));
   return std::string(out.begin(), out.end());
 }
 
@@ -62,7 +74,9 @@ static std::string hmacSha256(const std::string& data,
 static bool constantTimeEq(const std::string& a, const std::string& b) {
   if (a.size() != b.size()) return false;
   unsigned char diff = 0;
-  for (size_t i = 0; i < a.size(); i++) diff |= (a[i] ^ b[i]);
+  for (size_t i = 0; i < a.size(); i++) {
+    diff |= static_cast<unsigned char>(a[i] ^ b[i]);
+  }
   return diff == 0;
 }
 
@@ -70,7 +84,7 @@ std::string Jwt::signUser(long userId, const std::string& secret,
                           int ttlSeconds) {
   json header = {{"alg", "HS256"}, {"typ", "JWT"}};
 
-  const std::time_t now = std::time(nullptr);
+  std::time_t now = std::time(nullptr);
   json payload = {
       {"sub", std::to_string(userId)},
       {"iat", static_cast<long>(now)},
@@ -89,7 +103,6 @@ std::string Jwt::signUser(long userId, const std::string& secret,
 
 std::optional<long> Jwt::verifyAndGetUserId(const std::string& token,
                                             const std::string& secret) {
-  // token = h.p.s
   size_t a = token.find('.');
   if (a == std::string::npos) return std::nullopt;
   size_t b = token.find('.', a + 1);
@@ -114,15 +127,24 @@ std::optional<long> Jwt::verifyAndGetUserId(const std::string& token,
   if (!payload.contains("exp") || !payload.contains("sub")) return std::nullopt;
 
   long exp = 0;
-  try { exp = payload["exp"].get<long>(); } catch (...) { return std::nullopt; }
+  try {
+    exp = payload["exp"].get<long>();
+  } catch (...) {
+    return std::nullopt;
+  }
 
   std::time_t now = std::time(nullptr);
   if (now >= exp) return std::nullopt;
 
-  std::string sub = payload["sub"].get<std::string>();
+  std::string sub;
   try {
-    long userId = std::stol(sub);
-    return userId;
+    sub = payload["sub"].get<std::string>();
+  } catch (...) {
+    return std::nullopt;
+  }
+
+  try {
+    return std::stol(sub);
   } catch (...) {
     return std::nullopt;
   }
