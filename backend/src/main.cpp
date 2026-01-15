@@ -22,9 +22,7 @@ static std::string readFile(const std::string& path) {
 }
 
 static void addCors(httplib::Response& res, const std::string& origin) {
-  // If origin is "*", allow any origin
   if (origin.empty()) return;
-
   res.set_header("Access-Control-Allow-Origin", origin.c_str());
   res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -43,8 +41,9 @@ static void jsonError(httplib::Response& res,
                       const std::string& origin) {
   addCors(res, origin);
   res.status = status;
-  res.set_content(json({{"error", {{"code", code}, {"message", msg}}}}).dump(),
-                  "application/json");
+  res.set_content(
+      json({{"error", {{"code", code}, {"message", msg}}}}).dump(),
+      "application/json");
 }
 
 static bool parseJsonBody(const httplib::Request& req, json& out) {
@@ -53,10 +52,7 @@ static bool parseJsonBody(const httplib::Request& req, json& out) {
 }
 
 static std::string ensureSslMode(const std::string& url) {
-  // If already has sslmode, do nothing.
   if (url.find("sslmode=") != std::string::npos) return url;
-
-  // Many managed DBs require SSL; adding this is usually safe.
   std::string out = url;
   if (out.find('?') == std::string::npos) out += "?sslmode=require";
   else out += "&sslmode=require";
@@ -64,8 +60,8 @@ static std::string ensureSslMode(const std::string& url) {
 }
 
 static std::string getDatabaseUrlOrEmpty() {
-  // Render / other platforms may use different names
-  std::string dbUrl = Env::firstOf({"DATABASE_URL", "POSTGRES_URL", "RENDER_DATABASE_URL"}, "");
+  std::string dbUrl =
+      Env::firstOf({"DATABASE_URL", "POSTGRES_URL", "RENDER_DATABASE_URL"}, "");
   return dbUrl;
 }
 
@@ -114,12 +110,10 @@ int main() {
       return 1;
     }
 
-    // For quick testing you can set "*" (but in production set your frontend domain).
     const std::string corsOrigin = Env::get("CORS_ORIGIN", "*");
 
     Db db(dbUrl);
 
-    // Run migrations: try local file first, then Docker path fallback.
     std::string mig = readFile("migrations.sql");
     if (mig.empty()) mig = readFile("/app/migrations.sql");
     if (mig.empty()) {
@@ -130,18 +124,15 @@ int main() {
 
     httplib::Server srv;
 
-    // Preflight
     srv.Options(R"(.*)", [&](const httplib::Request&, httplib::Response& res) {
       addCors(res, corsOrigin);
       res.status = 204;
     });
 
-    // Health
     srv.Get("/health", [&](const httplib::Request&, httplib::Response& res) {
       jsonOk(res, {{"ok", true}}, corsOrigin);
     });
 
-    // Register
     srv.Post("/auth/register", [&](const httplib::Request& req, httplib::Response& res) {
       json body;
       if (!parseJsonBody(req, body)) {
@@ -159,10 +150,11 @@ int main() {
 
       std::string pwHash = Password::hash(password);
 
-      const char* params[3] = { name.c_str(), email.c_str(), pwHash.c_str() };
-      PGresult* r = PQexecParams(db.conn(),
-        "INSERT INTO users(name,email,password_hash) VALUES($1,$2,$3) RETURNING id",
-        3, nullptr, params, nullptr, nullptr, 0);
+      const char* params[3] = {name.c_str(), email.c_str(), pwHash.c_str()};
+      PGresult* r = PQexecParams(
+          db.conn(),
+          "INSERT INTO users(name,email,password_hash) VALUES($1,$2,$3) RETURNING id",
+          3, nullptr, params, nullptr, nullptr, 0);
 
       if (!r || PQresultStatus(r) != PGRES_TUPLES_OK) {
         if (r) PQclear(r);
@@ -177,7 +169,6 @@ int main() {
       jsonOk(res, {{"token", token}}, corsOrigin);
     });
 
-    // Login
     srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
       json body;
       if (!parseJsonBody(req, body)) {
@@ -191,10 +182,11 @@ int main() {
         return jsonError(res, 400, "VALIDATION_ERROR", "email and password required", corsOrigin);
       }
 
-      const char* params[1] = { email.c_str() };
-      PGresult* r = PQexecParams(db.conn(),
-        "SELECT id, password_hash FROM users WHERE email=$1",
-        1, nullptr, params, nullptr, nullptr, 0);
+      const char* params[1] = {email.c_str()};
+      PGresult* r = PQexecParams(
+          db.conn(),
+          "SELECT id, password_hash FROM users WHERE email=$1",
+          1, nullptr, params, nullptr, nullptr, 0);
 
       if (!r || PQresultStatus(r) != PGRES_TUPLES_OK || PQntuples(r) != 1) {
         if (r) PQclear(r);
@@ -213,7 +205,6 @@ int main() {
       jsonOk(res, {{"token", token}}, corsOrigin);
     });
 
-    // Create transaction
     srv.Post("/transactions", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
@@ -245,14 +236,15 @@ int main() {
       std::string amtStr = std::to_string(amount);
 
       const char* params[8] = {
-        userStr.c_str(), type.c_str(), amtStr.c_str(), currency.c_str(),
-        date.c_str(), category.c_str(), title.c_str(), note.c_str()
+          userStr.c_str(), type.c_str(), amtStr.c_str(), currency.c_str(),
+          date.c_str(), category.c_str(), title.c_str(), note.c_str()
       };
 
-      PGresult* r = PQexecParams(db.conn(),
-        "INSERT INTO transactions(user_id,type,amount,currency,tx_date,category,title,note) "
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
-        8, nullptr, params, nullptr, nullptr, 0);
+      PGresult* r = PQexecParams(
+          db.conn(),
+          "INSERT INTO transactions(user_id,type,amount,currency,tx_date,category,title,note) "
+          "VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
+          8, nullptr, params, nullptr, nullptr, 0);
 
       if (!r || PQresultStatus(r) != PGRES_TUPLES_OK) {
         if (r) PQclear(r);
@@ -265,19 +257,19 @@ int main() {
       jsonOk(res, {{"id", id}}, corsOrigin);
     });
 
-    // List transactions
     srv.Get("/transactions", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
 
       std::string userStr = std::to_string(userId);
-      const char* params[1] = { userStr.c_str() };
+      const char* params[1] = {userStr.c_str()};
 
-      PGresult* r = PQexecParams(db.conn(),
-        "SELECT id,type,amount,currency,tx_date,category,title,COALESCE(note,'') "
-        "FROM transactions WHERE user_id=$1 "
-        "ORDER BY tx_date DESC, id DESC LIMIT 200",
-        1, nullptr, params, nullptr, nullptr, 0);
+      PGresult* r = PQexecParams(
+          db.conn(),
+          "SELECT id,type,amount,currency,tx_date,category,title,COALESCE(note,'') "
+          "FROM transactions WHERE user_id=$1 "
+          "ORDER BY tx_date DESC, id DESC LIMIT 200",
+          1, nullptr, params, nullptr, nullptr, 0);
 
       if (!r || PQresultStatus(r) != PGRES_TUPLES_OK) {
         if (r) PQclear(r);
@@ -288,14 +280,14 @@ int main() {
       int n = PQntuples(r);
       for (int i = 0; i < n; i++) {
         items.push_back({
-          {"id", std::atol(PQgetvalue(r, i, 0))},
-          {"type", PQgetvalue(r, i, 1)},
-          {"amount", std::stod(PQgetvalue(r, i, 2))},
-          {"currency", PQgetvalue(r, i, 3)},
-          {"date", PQgetvalue(r, i, 4)},
-          {"category", PQgetvalue(r, i, 5)},
-          {"title", PQgetvalue(r, i, 6)},
-          {"note", PQgetvalue(r, i, 7)}
+            {"id", std::atol(PQgetvalue(r, i, 0))},
+            {"type", PQgetvalue(r, i, 1)},
+            {"amount", std::stod(PQgetvalue(r, i, 2))},
+            {"currency", PQgetvalue(r, i, 3)},
+            {"date", PQgetvalue(r, i, 4)},
+            {"category", PQgetvalue(r, i, 5)},
+            {"title", PQgetvalue(r, i, 6)},
+            {"note", PQgetvalue(r, i, 7)}
         });
       }
       PQclear(r);
@@ -303,20 +295,20 @@ int main() {
       jsonOk(res, {{"items", items}}, corsOrigin);
     });
 
-    // Summary
     srv.Get("/summary", [&](const httplib::Request& req, httplib::Response& res) {
       long userId = requireAuth(req, res, jwtSecret, corsOrigin);
       if (!userId) return;
 
       std::string userStr = std::to_string(userId);
-      const char* params[1] = { userStr.c_str() };
+      const char* params[1] = {userStr.c_str()};
 
-      PGresult* r = PQexecParams(db.conn(),
-        "SELECT "
-        "COALESCE(SUM(CASE WHEN type='INCOME' THEN amount END),0) AS income, "
-        "COALESCE(SUM(CASE WHEN type='EXPENSE' THEN amount END),0) AS expense "
-        "FROM transactions WHERE user_id=$1",
-        1, nullptr, params, nullptr, nullptr, 0);
+      PGresult* r = PQexecParams(
+          db.conn(),
+          "SELECT "
+          "COALESCE(SUM(CASE WHEN type='INCOME' THEN amount END),0) AS income, "
+          "COALESCE(SUM(CASE WHEN type='EXPENSE' THEN amount END),0) AS expense "
+          "FROM transactions WHERE user_id=$1",
+          1, nullptr, params, nullptr, nullptr, 0);
 
       if (!r || PQresultStatus(r) != PGRES_TUPLES_OK) {
         if (r) PQclear(r);
@@ -327,20 +319,22 @@ int main() {
       double expense = std::stod(PQgetvalue(r, 0, 1));
       PQclear(r);
 
-      jsonOk(res, {
-        {"income", income},
-        {"expense", expense},
-        {"balance", income - expense}
-      }, corsOrigin);
+      jsonOk(res, {{"income", income},
+                  {"expense", expense},
+                  {"balance", income - expense}},
+             corsOrigin);
     });
 
     std::cout << "FlowFund API listening on " << host << ":" << port << "\n";
     std::cout << "CORS_ORIGIN=" << corsOrigin << "\n";
 
-    srv.listen(host.c_str(), port.c_str());
+    // ✅ FIX HERE:
+    srv.listen(host.c_str(), port);
 
   } catch (const std::exception& e) {
     std::cerr << "Fatal: " << e.what() << "\n";
     return 1;
   }
+
+  return 0;
 }
