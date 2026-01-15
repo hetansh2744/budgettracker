@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . /app
 
-# Download header-only dependencies
+# ✅ Download header-only deps BEFORE compiling
 RUN mkdir -p /app/third_party/nlohmann \
   && curl -L -o /app/third_party/httplib.h \
      https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h \
