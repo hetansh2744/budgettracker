@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <stdexcept>
 #include <libpq-fe.h>
 
 class Db {
@@ -10,10 +11,9 @@ public:
   Db(const Db&) = delete;
   Db& operator=(const Db&) = delete;
 
-  PGconn* conn() { return m_conn; }
-
+  PGconn* conn() const { return conn_; }
   void execOrThrow(const std::string& sql);
 
 private:
-  PGconn* m_conn = nullptr;
+  PGconn* conn_{nullptr};
 };

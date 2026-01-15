@@ -13,4 +13,4 @@ COPY . /app
 RUN mkdir -p build && cd build && cmake .. && cmake --build . -j
 
 EXPOSE 10000
-CMD ["./build/flowfund"]
+CMD ["/app/build/flowfund"]

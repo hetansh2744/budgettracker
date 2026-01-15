@@ -1,90 +1,122 @@
 #include "Jwt.hpp"
 #include "json.hpp"
+
 #include <openssl/hmac.h>
-#include <openssl/evp.h>
 #include <ctime>
-#include <sstream>
+#include <vector>
+#include <string>
 
 using json = nlohmann::json;
 
 static std::string b64urlEncode(const std::string& in) {
+  static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string out;
-  out.resize(4 * ((in.size() + 2) / 3));
-  int len = EVP_EncodeBlock((unsigned char*)&out[0], (const unsigned char*)in.data(), (int)in.size());
-  out.resize(len);
-  for (char& c : out) { if (c == '+') c = '-'; else if (c == '/') c = '_'; }
+  int val = 0, valb = -6;
+  for (unsigned char c : in) {
+    val = (val << 8) + c;
+    valb += 8;
+    while (valb >= 0) {
+      out.push_back(b64[(val >> valb) & 0x3F]);
+      valb -= 6;
+    }
+  }
+  if (valb > -6) out.push_back(b64[((val << 8) >> (valb + 8)) & 0x3F]);
+  while (out.size() % 4) out.push_back('=');
+
+  // base64url transform
+  for (auto& ch : out) {
+    if (ch == '+') ch = '-';
+    else if (ch == '/') ch = '_';
+  }
   while (!out.empty() && out.back() == '=') out.pop_back();
   return out;
 }
 
-static std::string b64urlToB64(std::string s) {
-  for (char& c : s) { if (c == '-') c = '+'; else if (c == '_') c = '/'; }
+static std::string b64urlDecode(const std::string& in) {
+  std::string s = in;
+  for (auto& ch : s) {
+    if (ch == '-') ch = '+';
+    else if (ch == '_') ch = '/';
+  }
   while (s.size() % 4) s.push_back('=');
-  return s;
-}
 
-static std::string b64decode(const std::string& b64) {
+  static const int T[256] = {
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+    -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+  };
+
   std::string out;
-  out.resize((b64.size() * 3) / 4);
-  int len = EVP_DecodeBlock((unsigned char*)&out[0], (const unsigned char*)b64.data(), (int)b64.size());
-  if (len < 0) return {};
-  out.resize(len);
-  while (!out.empty() && out.back() == '\0') out.pop_back();
+  int val = 0, valb = -8;
+  for (unsigned char c : s) {
+    if (T[c] == -1) break;
+    val = (val << 6) + T[c];
+    valb += 6;
+    if (valb >= 0) {
+      out.push_back(char((val >> valb) & 0xFF));
+      valb -= 8;
+    }
+  }
   return out;
 }
 
-static std::string hmac256(const std::string& data, const std::string& secret) {
+static std::string hmacSha256(const std::string& data, const std::string& secret) {
   unsigned int len = 0;
-  unsigned char* digest = HMAC(EVP_sha256(),
-                               secret.data(), (int)secret.size(),
-                               (const unsigned char*)data.data(), data.size(),
-                               nullptr, &len);
-  return std::string((char*)digest, (char*)digest + len);
-}
-
-static bool timingEq(const std::string& a, const std::string& b) {
-  if (a.size() != b.size()) return false;
-  unsigned char diff = 0;
-  for (size_t i = 0; i < a.size(); i++) diff |= (unsigned char)(a[i] ^ b[i]);
-  return diff == 0;
+  unsigned char out[EVP_MAX_MD_SIZE];
+  HMAC(EVP_sha256(),
+       secret.data(), (int)secret.size(),
+       (const unsigned char*)data.data(), data.size(),
+       out, &len);
+  return std::string((char*)out, (char*)out + len);
 }
 
 std::string Jwt::signUser(long userId, const std::string& secret, int ttlSeconds) {
   json header = {{"alg","HS256"},{"typ","JWT"}};
-  std::time_t now = std::time(nullptr);
-  json payload = {{"sub", userId}, {"iat", (long)now}, {"exp", (long)(now + ttlSeconds)}};
+  long now = (long)std::time(nullptr);
+  json payload = {
+    {"sub", userId},
+    {"iat", now},
+    {"exp", now + ttlSeconds}
+  };
 
   std::string h = b64urlEncode(header.dump());
   std::string p = b64urlEncode(payload.dump());
-  std::string msg = h + "." + p;
+  std::string toSign = h + "." + p;
 
-  std::string sig = b64urlEncode(hmac256(msg, secret));
-  return msg + "." + sig;
+  std::string sig = b64urlEncode(hmacSha256(toSign, secret));
+  return toSign + "." + sig;
 }
 
 std::optional<long> Jwt::verifyAndGetUserId(const std::string& token, const std::string& secret) {
-  auto a = token.find('.');
-  auto b = token.find('.', a + 1);
-  if (a == std::string::npos || b == std::string::npos) return std::nullopt;
+  size_t a = token.find('.');
+  if (a == std::string::npos) return std::nullopt;
+  size_t b = token.find('.', a + 1);
+  if (b == std::string::npos) return std::nullopt;
 
   std::string h = token.substr(0, a);
   std::string p = token.substr(a + 1, b - (a + 1));
   std::string s = token.substr(b + 1);
 
-  std::string msg = h + "." + p;
-  std::string expected = b64urlEncode(hmac256(msg, secret));
-  if (!timingEq(expected, s)) return std::nullopt;
+  std::string toSign = h + "." + p;
+  std::string expected = b64urlEncode(hmacSha256(toSign, secret));
 
-  std::string payloadJson = b64decode(b64urlToB64(p));
-  if (payloadJson.empty()) return std::nullopt;
+  if (expected.size() != s.size()) return std::nullopt;
+  unsigned char diff = 0;
+  for (size_t i = 0; i < s.size(); i++) diff |= (unsigned char)(expected[i] ^ s[i]);
+  if (diff != 0) return std::nullopt;
 
-  json payload = json::parse(payloadJson, nullptr, false);
+  json payload = json::parse(b64urlDecode(p), nullptr, false);
   if (payload.is_discarded()) return std::nullopt;
 
   long exp = payload.value("exp", 0L);
-  long sub = payload.value("sub", 0L);
   long now = (long)std::time(nullptr);
+  if (exp <= now) return std::nullopt;
 
-  if (sub <= 0 || exp <= now) return std::nullopt;
-  return sub;
+  if (!payload.contains("sub")) return std::nullopt;
+  return payload["sub"].get<long>();
 }
