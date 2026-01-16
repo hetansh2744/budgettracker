@@ -1,322 +1,302 @@
-/* FlowFund — Frontend (GitHub Pages) + Backend (Render API)
-   - Register / Login (JWT)
-   - Create + List transactions from API
-   - Summary from API
-*/
+// =============================
+// FlowFund Frontend (GitHub Pages)
+// =============================
 
-const API_BASE = "https://budgettracker-2-qmpz.onrender.com"; // Render API
-const TOKEN_KEY = "flowfund.jwt.v1";
+// ✅ Your Render backend:
+const API_BASE = "https://budgettracker-2-qmpz.onrender.com";
 
-const $ = (id) => document.getElementById(id);
-
-const els = {
-  incomeAmount: $("incomeAmount"),
-  expenseAmount: $("expenseAmount"),
-  balanceAmount: $("balanceAmount"),
-  txList: $("transactionList"),
-  emptyState: $("emptyState"),
-  addBtn: $("addBtn"),
-  resetBtn: $("resetBtn"),
-
-  modalBackdrop: $("modalBackdrop"),
-  closeModalBtn: $("closeModalBtn"),
-  cancelBtn: $("cancelBtn"),
-  modalTitle: $("modalTitle"),
-
-  form: $("txForm"),
-  txType: $("txType"),
-  txAmount: $("txAmount"),
-  txDate: $("txDate"),
-  txCategory: $("txCategory"),
-  txTitle: $("txTitle"),
-  txNote: $("txNote"),
-  editId: $("editId"),
-
-  typeFilter: $("typeFilter"),
-  searchInput: $("searchInput"),
-};
-
+// ---------- Token helpers ----------
 function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
-}
-function setToken(t) {
-  if (!t) localStorage.removeItem(TOKEN_KEY);
-  else localStorage.setItem(TOKEN_KEY, t);
+  return localStorage.getItem("token") || "";
 }
 
-function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+function setToken(token) {
+  localStorage.setItem("token", token);
 }
 
-function formatMoney(n) {
-  const v = Number(n || 0);
-  return `$${v.toFixed(2)}`;
+function clearToken() {
+  localStorage.removeItem("token");
 }
 
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function isLoggedIn() {
+  return !!getToken();
 }
 
-async function api(path, { method = "GET", body } = {}) {
+// ---------- Small UI helpers ----------
+function $(id) {
+  return document.getElementById(id);
+}
+
+function show(el) {
+  if (el) el.style.display = "block";
+}
+
+function hide(el) {
+  if (el) el.style.display = "none";
+}
+
+function setText(el, text) {
+  if (el) el.textContent = text;
+}
+
+function showError(msg) {
+  const el = $("error");
+  if (el) {
+    el.textContent = msg;
+    el.style.display = "block";
+  } else {
+    alert(msg);
+  }
+}
+
+function clearError() {
+  const el = $("error");
+  if (el) {
+    el.textContent = "";
+    el.style.display = "none";
+  }
+}
+
+// ---------- API wrapper (adds Authorization automatically) ----------
+async function api(path, { method = "GET", body = null, auth = false } = {}) {
   const headers = { "Content-Type": "application/json" };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
+
+  if (auth) {
+    const token = getToken();
+    if (!token) {
+      // Don’t spam login loop — just show auth screen once.
+      throw { status: 401, message: "Not logged in" };
+    }
+    headers["Authorization"] = `Bearer ${token}`;
+  }
 
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body ? JSON.stringify(body) : null
   });
 
+  // If backend returns non-JSON sometimes, be safe:
   const text = await res.text();
   let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
 
   if (!res.ok) {
     const msg =
       data?.error?.message ||
-      (typeof data === "string" ? data : "Request failed");
-    throw new Error(msg);
+      data?.message ||
+      `Request failed (${res.status})`;
+    throw { status: res.status, message: msg, data };
   }
+
   return data;
 }
 
-/* ---------- Auth UI (prompt-based, minimal) ---------- */
+// ---------- Auth UI control ----------
+function renderAuthState() {
+  const authBox = $("authBox");       // login/register container
+  const appBox = $("appBox");         // main app container
+  const logoutBtn = $("logoutBtn");   // optional button
 
-async function ensureLoggedIn() {
-  if (getToken()) return true;
+  clearError();
 
-  const choice = prompt(
-    "You are not logged in.\nType 1 to Login, 2 to Register, or Cancel to stop:"
-  );
-  if (choice !== "1" && choice !== "2") return false;
-
-  if (choice === "2") {
-    const name = prompt("Name:");
-    const email = prompt("Email:");
-    const password = prompt("Password (min 6 chars):");
-    if (!name || !email || !password) return false;
-
-    const out = await api("/auth/register", {
-      method: "POST",
-      body: { name, email, password },
-    });
-    setToken(out.token);
-    alert("Registered & logged in!");
-    return true;
-  }
-
-  // login
-  const email = prompt("Email:");
-  const password = prompt("Password:");
-  if (!email || !password) return false;
-
-  const out = await api("/auth/login", {
-    method: "POST",
-    body: { email, password },
-  });
-  setToken(out.token);
-  alert("Logged in!");
-  return true;
-}
-
-function logout() {
-  setToken("");
-  alert("Logged out.");
-  // Clear UI
-  transactions = [];
-  renderAll();
-}
-
-/* ---------- Data / Render ---------- */
-
-let transactions = [];
-
-function applyFilters(list) {
-  const type = els.typeFilter.value;
-  const q = els.searchInput.value.trim().toLowerCase();
-
-  return list.filter((t) => {
-    const matchesType = type === "ALL" || t.type === type;
-    const hay = `${t.title} ${t.category} ${t.note} ${t.date}`.toLowerCase();
-    const matchesQ = !q || hay.includes(q);
-    return matchesType && matchesQ;
-  });
-}
-
-function renderCards(summary) {
-  els.incomeAmount.textContent = formatMoney(summary.income);
-  els.expenseAmount.textContent = formatMoney(summary.expense);
-  els.balanceAmount.textContent = formatMoney(summary.balance);
-}
-
-function renderList() {
-  const filtered = applyFilters(
-    [...transactions].sort((a, b) => (b.date || "").localeCompare(a.date || ""))
-  );
-
-  els.txList.innerHTML = "";
-
-  if (filtered.length === 0) {
-    els.emptyState.classList.remove("hidden");
-    return;
-  }
-  els.emptyState.classList.add("hidden");
-
-  for (const t of filtered) {
-    const isIncome = t.type === "INCOME";
-    const sign = isIncome ? "+" : "-";
-    const amountClass = isIncome ? "amount-income" : "amount-expense";
-
-    const li = document.createElement("li");
-    li.className = "tx";
-
-    li.innerHTML = `
-      <div>
-        <div class="tx-title">${escapeHtml(t.title)}</div>
-        <div class="tx-meta">${escapeHtml(t.date)} • ${escapeHtml(
-      t.category
-    )}</div>
-      </div>
-
-      <div class="tx-right">
-        <div class="tx-amount ${amountClass}">${sign}${formatMoney(
-      t.amount
-    ).slice(1)}</div>
-        <div class="tx-actions">
-          <button class="icon-btn" data-action="delete" data-id="${t.id}">Delete</button>
-        </div>
-      </div>
-    `;
-
-    els.txList.appendChild(li);
+  if (isLoggedIn()) {
+    hide(authBox);
+    show(appBox);
+    show(logoutBtn);
+  } else {
+    show(authBox);
+    hide(appBox);
+    hide(logoutBtn);
   }
 }
 
-async function refreshFromServer() {
-  const ok = await ensureLoggedIn();
-  if (!ok) return;
-
-  const [txOut, summary] = await Promise.all([
-    api("/transactions"),
-    api("/summary"),
-  ]);
-
-  transactions = txOut.items || [];
-  renderCards(summary);
-  renderList();
-}
-
-function openModal(mode) {
-  els.modalBackdrop.classList.remove("hidden");
-  els.modalBackdrop.setAttribute("aria-hidden", "false");
-
-  els.editId.value = "";
-  els.modalTitle.textContent = mode === "edit" ? "Edit Transaction" : "Add Transaction";
-
-  els.txType.value = "INCOME";
-  els.txAmount.value = "";
-  els.txDate.value = todayISO();
-  els.txCategory.value = "";
-  els.txTitle.value = "";
-  els.txNote.value = "";
-
-  setTimeout(() => els.txAmount.focus(), 0);
-}
-
-function closeModal() {
-  els.modalBackdrop.classList.add("hidden");
-  els.modalBackdrop.setAttribute("aria-hidden", "true");
-  els.form.reset();
-  els.editId.value = "";
-}
-
-async function createTransaction(tx) {
-  await api("/transactions", { method: "POST", body: tx });
-  await refreshFromServer();
-}
-
-/* ---------- Events ---------- */
-
-els.addBtn.addEventListener("click", async () => {
-  const ok = await ensureLoggedIn();
-  if (!ok) return;
-  openModal("add");
-});
-
-// "Reset Demo" no longer makes sense once you use the server.
-// We'll repurpose it as Logout for a clean demo.
-els.resetBtn.textContent = "Logout";
-els.resetBtn.title = "Logs out from this browser";
-els.resetBtn.addEventListener("click", logout);
-
-els.closeModalBtn.addEventListener("click", closeModal);
-els.cancelBtn.addEventListener("click", closeModal);
-
-els.modalBackdrop.addEventListener("click", (e) => {
-  if (e.target === els.modalBackdrop) closeModal();
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !els.modalBackdrop.classList.contains("hidden"))
-    closeModal();
-});
-
-els.form.addEventListener("submit", async (e) => {
+// ---------- Auth actions ----------
+async function onRegister(e) {
   e.preventDefault();
+  clearError();
 
-  const type = els.txType.value;
-  const amount = Number(els.txAmount.value);
-  const date = els.txDate.value;
-  const category = els.txCategory.value.trim();
-  const title = els.txTitle.value.trim();
-  const note = els.txNote.value.trim();
+  const name = $("regName")?.value?.trim() || "";
+  const email = $("regEmail")?.value?.trim() || "";
+  const password = $("regPassword")?.value || "";
 
-  if (!date || !category || !title || !(amount > 0)) {
-    alert("Please fill in all required fields correctly.");
-    return;
+  if (!name || !email || password.length < 6) {
+    return showError("Register: name, email, password (>=6) required.");
   }
 
   try {
-    await createTransaction({ type, amount, date, category, title, note });
-    closeModal();
+    const data = await api("/auth/register", {
+      method: "POST",
+      body: { name, email, password },
+      auth: false
+    });
+
+    if (!data?.token) return showError("Register failed: No token received.");
+    setToken(data.token);
+
+    renderAuthState();
+    await refreshAll();
   } catch (err) {
-    alert(err.message || "Failed to save transaction");
+    showError(`Register failed: ${err.message || "Unknown error"}`);
   }
-});
+}
 
-els.txList.addEventListener("click", async (e) => {
-  const btn = e.target.closest("button");
-  if (!btn) return;
+async function onLogin(e) {
+  e.preventDefault();
+  clearError();
 
-  const action = btn.dataset.action;
-  const id = btn.dataset.id;
+  const email = $("loginEmail")?.value?.trim() || "";
+  const password = $("loginPassword")?.value || "";
 
-  if (action === "delete") {
-    alert(
-      "Delete is not implemented on the backend yet.\n\nIf you want, I can add:\nDELETE /transactions/:id"
-    );
+  if (!email || !password) {
+    return showError("Login: email and password required.");
   }
-});
 
-els.typeFilter.addEventListener("change", renderList);
-els.searchInput.addEventListener("input", renderList);
+  try {
+    const data = await api("/auth/login", {
+      method: "POST",
+      body: { email, password },
+      auth: false
+    });
 
-/* Init */
-refreshFromServer().catch(() => {
-  // If not logged in, show zero summary UI
-  els.incomeAmount.textContent = "$0.00";
-  els.expenseAmount.textContent = "$0.00";
-  els.balanceAmount.textContent = "$0.00";
-  transactions = [];
-  renderList();
-});
+    if (!data?.token) return showError("Login failed: No token received.");
+    setToken(data.token);
+
+    renderAuthState();
+    await refreshAll();
+  } catch (err) {
+    showError(`Login failed: ${err.message || "Unknown error"}`);
+  }
+}
+
+function onLogout() {
+  clearToken();
+  renderAuthState();
+  // Optional: clear UI
+  setText($("summary"), "");
+  const list = $("txList");
+  if (list) list.innerHTML = "";
+}
+
+// ---------- Transactions ----------
+async function onAddTransaction(e) {
+  e.preventDefault();
+  clearError();
+
+  const type = $("txType")?.value || "EXPENSE";
+  const amount = Number($("txAmount")?.value || 0);
+  const date = $("txDate")?.value || "";
+  const category = $("txCategory")?.value?.trim() || "";
+  const title = $("txTitle")?.value?.trim() || "";
+  const note = $("txNote")?.value?.trim() || "";
+  const currency = $("txCurrency")?.value || "CAD";
+
+  if (!["INCOME", "EXPENSE"].includes(type)) return showError("Type must be INCOME or EXPENSE.");
+  if (!amount || amount <= 0) return showError("Amount must be > 0.");
+  if (!date || !category || !title) return showError("date, category, title required.");
+
+  try {
+    await api("/transactions", {
+      method: "POST",
+      body: { type, amount, date, category, title, note, currency },
+      auth: true
+    });
+
+    // reset some fields (optional)
+    if ($("txAmount")) $("txAmount").value = "";
+    if ($("txTitle")) $("txTitle").value = "";
+    if ($("txNote")) $("txNote").value = "";
+
+    await refreshAll();
+  } catch (err) {
+    if (err.status === 401) {
+      // Token invalid/expired or missing — go to login once
+      clearToken();
+      renderAuthState();
+      return showError("Session expired. Please login again.");
+    }
+    showError(`Add transaction failed: ${err.message || "Unknown error"}`);
+  }
+}
+
+async function loadTransactions() {
+  const list = $("txList");
+  if (!list) return;
+
+  list.innerHTML = "Loading...";
+
+  try {
+    const data = await api("/transactions", { auth: true });
+    const items = data?.items || [];
+
+    if (items.length === 0) {
+      list.innerHTML = "<li>No transactions yet.</li>";
+      return;
+    }
+
+    list.innerHTML = items.map(tx => {
+      const sign = tx.type === "EXPENSE" ? "-" : "+";
+      return `<li>
+        <strong>${tx.title}</strong> (${tx.category}) — ${sign}${tx.amount} ${tx.currency}
+        <br/>
+        <small>${tx.date}${tx.note ? " • " + tx.note : ""}</small>
+      </li>`;
+    }).join("");
+  } catch (err) {
+    if (err.status === 401) {
+      clearToken();
+      renderAuthState();
+      showError("Session expired. Please login again.");
+      return;
+    }
+    list.innerHTML = "<li>Failed to load transactions.</li>";
+    showError(err.message || "Failed to load transactions.");
+  }
+}
+
+async function loadSummary() {
+  const el = $("summary");
+  if (!el) return;
+
+  setText(el, "Loading...");
+
+  try {
+    const data = await api("/summary", { auth: true });
+    const income = data?.income ?? 0;
+    const expense = data?.expense ?? 0;
+    const balance = data?.balance ?? 0;
+
+    setText(el, `Income: ${income} | Expense: ${expense} | Balance: ${balance}`);
+  } catch (err) {
+    if (err.status === 401) {
+      clearToken();
+      renderAuthState();
+      showError("Session expired. Please login again.");
+      return;
+    }
+    setText(el, "");
+    showError(err.message || "Failed to load summary.");
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadSummary(), loadTransactions()]);
+}
+
+// ---------- Wire up events ----------
+function init() {
+  // forms/buttons (IDs expected in HTML)
+  $("registerForm")?.addEventListener("submit", onRegister);
+  $("loginForm")?.addEventListener("submit", onLogin);
+  $("txForm")?.addEventListener("submit", onAddTransaction);
+  $("logoutBtn")?.addEventListener("click", onLogout);
+
+  renderAuthState();
+
+  // If already logged in, load data
+  if (isLoggedIn()) {
+    refreshAll().catch(() => {});
+  }
+}
+
+document.addEventListener("DOMContentLoaded", init);
