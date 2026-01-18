@@ -2,15 +2,8 @@
    FlowFund GitHub Pages UI
    =========================== */
 
-/**
- * IMPORTANT:
- * Set this to your Render base URL (no trailing slash)
- */
-const API_BASE = "https://budgettracker-2-qmpz.onrender.com";
+const API_BASE = "https://budgettracker-2-qmpz.onrender.com"; // Render API (no trailing slash)
 
-/**
- * Update these if your backend routes differ.
- */
 const ENDPOINTS = {
   health: "/health",
   register: "/api/auth/register",
@@ -50,21 +43,10 @@ function escapeHtml(str) {
 function log(msg, type = "info") {
   const el = $("log");
   if (!el) return;
-
   const time = new Date().toLocaleTimeString();
   const prefix = type === "error" ? "❌" : type === "ok" ? "✅" : "ℹ️";
   el.innerHTML += `${prefix} [${time}] ${escapeHtml(msg)}<br/>`;
   el.scrollTop = el.scrollHeight;
-}
-
-function must(id) {
-  const el = $(id);
-  if (!el) {
-    // This is the #1 reason buttons "do nothing"
-    console.error(`Missing element with id="${id}"`);
-    log(`Missing element with id="${id}" (check index.html)`, "error");
-  }
-  return el;
 }
 
 function setApiStatus(text, ok = false) {
@@ -73,21 +55,6 @@ function setApiStatus(text, ok = false) {
   pill.textContent = `API: ${text}`;
   pill.style.borderColor = ok ? "rgba(44,255,136,0.45)" : "rgba(255,77,109,0.35)";
   pill.style.color = ok ? "rgba(232,255,241,0.85)" : "rgba(255,200,210,0.9)";
-}
-
-function saveSession(token, user) {
-  state.token = token || "";
-  state.user = user || null;
-
-  localStorage.setItem(STORAGE.token, state.token);
-  localStorage.setItem(STORAGE.user, JSON.stringify(state.user));
-
-  setSessionUI();
-}
-
-function clearSession() {
-  saveSession("", null);
-  log("Logged out.", "ok");
 }
 
 function setSessionUI() {
@@ -101,7 +68,6 @@ function setSessionUI() {
     if (info) info.textContent = `Logged in as ${email}`;
     if (btnLogout) btnLogout.disabled = false;
     if (btnLoad) btnLoad.disabled = false;
-
     if (list) {
       list.classList.remove("muted");
       list.textContent = "Click Load to fetch expenses.";
@@ -110,7 +76,6 @@ function setSessionUI() {
     if (info) info.textContent = "Not logged in";
     if (btnLogout) btnLogout.disabled = true;
     if (btnLoad) btnLoad.disabled = true;
-
     if (list) {
       list.classList.add("muted");
       list.textContent = "Login to load expenses.";
@@ -118,14 +83,25 @@ function setSessionUI() {
   }
 }
 
+function saveSession(token, user) {
+  state.token = token || "";
+  state.user = user || null;
+  localStorage.setItem(STORAGE.token, state.token);
+  localStorage.setItem(STORAGE.user, JSON.stringify(state.user));
+  setSessionUI();
+}
+
+function clearSession() {
+  saveSession("", null);
+  log("Logged out.", "ok");
+}
+
 async function apiFetch(path, options = {}) {
   const url = API_BASE + path;
 
-  const headers = {
-    ...(options.headers || {})
-  };
+  const headers = { ...(options.headers || {}) };
 
-  // Only set JSON content-type when we have a body
+  // Set JSON header only if body exists
   if (options.body && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
@@ -138,7 +114,6 @@ async function apiFetch(path, options = {}) {
   try {
     res = await fetch(url, { ...options, headers });
   } catch (e) {
-    // Network / DNS / blocked
     throw new Error(`Network error calling API (${url}). ${e.message}`);
   }
 
@@ -169,16 +144,15 @@ async function checkHealth() {
   } catch (e) {
     setApiStatus("offline", false);
     log(`Health failed: ${e.message}`, "error");
-    log(`If your health route differs, change ENDPOINTS.health`, "error");
   }
 }
 
 async function handleRegister(e) {
   e.preventDefault();
 
-  const name = must("regName")?.value?.trim() || "";
-  const email = must("regEmail")?.value?.trim() || "";
-  const password = must("regPassword")?.value || "";
+  const name = $("regName")?.value?.trim() || "";
+  const email = $("regEmail")?.value?.trim() || "";
+  const password = $("regPassword")?.value || "";
 
   if (!name || !email || !password) {
     log("Register: please fill all fields.", "error");
@@ -195,32 +169,31 @@ async function handleRegister(e) {
 
     log(`Registered. Response: ${JSON.stringify(data)}`, "ok");
 
-    // Try common token shapes
     const token = data?.token || data?.accessToken || data?.jwt || "";
-    const user = data?.user || { email, name };
+    const user = data?.user || { name, email };
 
     if (token) {
       saveSession(token, user);
       log("Auto-logged in after register.", "ok");
     } else {
-      log("No token returned on register. Use Login form now.", "info");
+      log("No token returned on register. Please login.", "info");
     }
 
     e.target.reset();
   } catch (err) {
     log(`Register failed: ${err.message}`, "error");
-    log("Most common causes: wrong endpoint OR CORS blocked OR backend error.", "info");
+    log("If you see 'Failed to fetch', backend CORS/OPTIONS must be fixed.", "info");
   }
 }
 
 async function handleLogin(e) {
   e.preventDefault();
 
-  const email = must("loginEmail")?.value?.trim() || "";
-  const password = must("loginPassword")?.value || "";
+  const email = $("loginEmail")?.value?.trim() || "";
+  const password = $("loginPassword")?.value || "";
 
   if (!email || !password) {
-    log("Login: please fill email and password.", "error");
+    log("Login: please fill all fields.", "error");
     return;
   }
 
@@ -232,13 +205,11 @@ async function handleLogin(e) {
       body: JSON.stringify({ email, password })
     });
 
-    log(`Login response: ${JSON.stringify(data)}`, "info");
-
     const token = data?.token || data?.accessToken || data?.jwt;
     const user = data?.user || { email };
 
     if (!token) {
-      throw new Error("Login response did not include a token (check backend response shape).");
+      throw new Error("Login response did not include a token.");
     }
 
     saveSession(token, user);
@@ -246,7 +217,6 @@ async function handleLogin(e) {
     e.target.reset();
   } catch (err) {
     log(`Login failed: ${err.message}`, "error");
-    log("If you see CORS in browser console, backend must allow GitHub Pages origin.", "info");
   }
 }
 
@@ -261,10 +231,10 @@ function renderExpenses(expenses) {
 
   list.innerHTML = expenses
     .map((x) => {
-      const title = escapeHtml(x.title ?? x.name ?? "Expense");
-      const amount = Number(x.amount ?? x.value ?? 0).toFixed(2);
+      const title = escapeHtml(x.title ?? "Expense");
+      const amount = Number(x.amount ?? 0).toFixed(2);
       const category = escapeHtml(x.category ?? "Other");
-      const date = escapeHtml((x.date ?? x.createdAt ?? "").toString().slice(0, 10));
+      const date = escapeHtml((x.date ?? "").toString().slice(0, 10));
 
       return `
         <div class="item">
@@ -298,7 +268,6 @@ async function loadExpenses() {
     log(`Loaded ${expenses.length} expense(s).`, "ok");
   } catch (err) {
     log(`Load expenses failed: ${err.message}`, "error");
-    log("Likely: wrong endpoint OR token rejected OR CORS.", "info");
   }
 }
 
@@ -310,12 +279,10 @@ async function addExpense(e) {
     return;
   }
 
-  const title = must("expTitle")?.value?.trim() || "";
-  const amountRaw = must("expAmount")?.value || "";
-  const category = must("expCategory")?.value || "Other";
-  const date = must("expDate")?.value || "";
-
-  const amount = parseFloat(amountRaw);
+  const title = $("expTitle")?.value?.trim() || "";
+  const amount = parseFloat($("expAmount")?.value || "");
+  const category = $("expCategory")?.value || "Other";
+  const date = $("expDate")?.value || "";
 
   if (!title || Number.isNaN(amount)) {
     log("Please enter a valid title and amount.", "error");
@@ -333,10 +300,8 @@ async function addExpense(e) {
       body: JSON.stringify(payload)
     });
 
-    log(`Expense added. Response: ${JSON.stringify(data)}`, "ok");
+    log(`Expense added: ${JSON.stringify(data)}`, "ok");
     e.target.reset();
-
-    // Refresh list
     await loadExpenses();
   } catch (err) {
     log(`Add expense failed: ${err.message}`, "error");
@@ -344,48 +309,32 @@ async function addExpense(e) {
 }
 
 function wireEvents() {
-  const formRegister = must("formRegister");
-  const formLogin = must("formLogin");
-  const formExpense = must("formExpense");
+  $("formRegister")?.addEventListener("submit", handleRegister);
+  $("formLogin")?.addEventListener("submit", handleLogin);
+  $("formExpense")?.addEventListener("submit", addExpense);
 
-  const btnLoad = must("btnLoadExpenses");
-  const btnLogout = must("btnLogout");
-
-  if (formRegister) formRegister.addEventListener("submit", handleRegister);
-  if (formLogin) formLogin.addEventListener("submit", handleLogin);
-  if (formExpense) formExpense.addEventListener("submit", addExpense);
-
-  if (btnLoad) btnLoad.addEventListener("click", loadExpenses);
-  if (btnLogout) btnLogout.addEventListener("click", () => {
+  $("btnLoadExpenses")?.addEventListener("click", loadExpenses);
+  $("btnLogout")?.addEventListener("click", () => {
     clearSession();
     renderExpenses([]);
   });
 
-  // Extra: log any clicks (helps confirm JS is running)
   document.addEventListener("click", (e) => {
-    const t = e.target;
-    if (t && t.tagName === "BUTTON") {
-      log(`Button clicked: "${t.textContent.trim()}"`, "info");
+    if (e.target?.tagName === "BUTTON") {
+      log(`Button clicked: "${e.target.textContent.trim()}"`, "info");
     }
   });
-
-  log("Events wired.", "ok");
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   log("UI loaded.", "ok");
-
   wireEvents();
   setSessionUI();
 
-  // Set date input to today (local)
+  // Set date to today
   const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const iso = `${yyyy}-${mm}-${dd}`;
-  const expDate = $("expDate");
-  if (expDate) expDate.value = iso;
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if ($("expDate")) $("expDate").value = iso;
 
   await checkHealth();
 });
