@@ -4,41 +4,39 @@ import jwt from "jsonwebtoken";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "flowfund_secret_key_demo";
+const JWT_SECRET = process.env.JWT_SECRET || "flowfund_secret";
 
-/* ===========================
-   Middleware
-   =========================== */
+/* =====================================================
+   🔥 CORS – THIS IS THE MOST IMPORTANT PART
+   ===================================================== */
 
+// ✅ Allow GitHub Pages + allow preflight
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "https://hetansh2744.github.io");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  // ✅ Handle preflight BEFORE anything else
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+// JSON parser AFTER CORS
 app.use(express.json());
 
-// ✅ CORS for GitHub Pages + local dev
-app.use(
-  cors({
-    origin: [
-      "https://hetansh2744.github.io",
-      "http://localhost:5500",
-      "http://127.0.0.1:5500"
-    ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
-  })
-);
+/* =====================================================
+   In-memory demo storage
+   ===================================================== */
 
-// ✅ Preflight support (THIS fixes "Failed to fetch")
-app.options("*", cors());
+const users = [];
+const expenses = [];
 
-/* ===========================
-   Demo storage (in-memory)
-   Replace with DB later
-   =========================== */
-
-const users = [];     // { id, name, email, password }
-const expenses = [];  // { id, userId, title, amount, category, date }
-
-/* ===========================
+/* =====================================================
    Helpers
-   =========================== */
+   ===================================================== */
 
 function signToken(user) {
   return jwt.sign(
@@ -51,38 +49,36 @@ function signToken(user) {
 function auth(req, res, next) {
   const header = req.headers.authorization || "";
   if (!header.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Missing Bearer token" });
+    return res.status(401).json({ message: "Missing token" });
   }
 
   try {
     const token = header.split(" ")[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (e) {
-    return res.status(401).json({ message: "Invalid or expired token" });
+  } catch {
+    return res.status(401).json({ message: "Invalid token" });
   }
 }
 
-/* ===========================
+/* =====================================================
    Routes
-   =========================== */
+   ===================================================== */
 
+// ✅ Health check (already works)
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
-/* ----- AUTH ----- */
-
+// ✅ Register (THIS WAS FAILING BEFORE)
 app.post("/api/auth/register", (req, res) => {
   const { name, email, password } = req.body || {};
 
   if (!name || !email || !password) {
-    return res.status(400).json({ message: "name, email, password required" });
+    return res.status(400).json({ message: "All fields required" });
   }
 
-  const exists = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-  if (exists) {
+  if (users.find(u => u.email === email)) {
     return res.status(400).json({ message: "Email already registered" });
   }
 
@@ -90,58 +86,53 @@ app.post("/api/auth/register", (req, res) => {
     id: Date.now().toString(),
     name,
     email,
-    password // ⚠️ demo only — use bcrypt in real app
+    password // demo only
   };
+
   users.push(user);
 
   const token = signToken(user);
 
-  return res.status(201).json({
+  res.status(201).json({
     token,
     user: { id: user.id, name: user.name, email: user.email }
   });
 });
 
+// ✅ Login
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body || {};
 
-  if (!email || !password) {
-    return res.status(400).json({ message: "email and password required" });
-  }
-
   const user = users.find(
-    (u) =>
-      u.email.toLowerCase() === email.toLowerCase() &&
-      u.password === password
+    u => u.email === email && u.password === password
   );
 
   if (!user) {
-    return res.status(401).json({ message: "Invalid email or password" });
+    return res.status(401).json({ message: "Invalid credentials" });
   }
 
   const token = signToken(user);
 
-  return res.json({
+  res.json({
     token,
     user: { id: user.id, name: user.name, email: user.email }
   });
 });
 
-/* ----- EXPENSES (protected) ----- */
-
+// ✅ Get expenses
 app.get("/api/expenses", auth, (req, res) => {
-  const list = expenses.filter((e) => e.userId === req.user.id);
-  res.json(list);
+  res.json(expenses.filter(e => e.userId === req.user.id));
 });
 
+// ✅ Add expense
 app.post("/api/expenses", auth, (req, res) => {
   const { title, amount, category, date } = req.body || {};
 
   if (!title || typeof amount !== "number") {
-    return res.status(400).json({ message: "title and numeric amount required" });
+    return res.status(400).json({ message: "Invalid expense" });
   }
 
-  const exp = {
+  const expense = {
     id: Date.now().toString(),
     userId: req.user.id,
     title,
@@ -150,13 +141,13 @@ app.post("/api/expenses", auth, (req, res) => {
     date: date || new Date().toISOString().slice(0, 10)
   };
 
-  expenses.push(exp);
-  res.status(201).json(exp);
+  expenses.push(expense);
+  res.status(201).json(expense);
 });
 
-/* ===========================
-   Start
-   =========================== */
+/* =====================================================
+   Start server
+   ===================================================== */
 
 app.listen(PORT, () => {
   console.log(`🔥 FlowFund API running on port ${PORT}`);
