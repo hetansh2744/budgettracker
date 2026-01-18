@@ -1,302 +1,303 @@
-// =============================
-// FlowFund Frontend (GitHub Pages)
-// =============================
+/* ===========================
+   FlowFund GitHub Pages UI
+   =========================== */
 
-// ✅ Your Render backend:
+/**
+ * IMPORTANT:
+ * Set this to your Render base URL.
+ * Do NOT add a trailing slash.
+ */
 const API_BASE = "https://budgettracker-2-qmpz.onrender.com";
 
-// ---------- Token helpers ----------
-function getToken() {
-  return localStorage.getItem("token") || "";
-}
+/**
+ * Update these paths if your backend uses different endpoints.
+ * If your backend uses /api/auth/login etc., this already matches.
+ */
+const ENDPOINTS = {
+  health: "/health",
+  register: "/api/auth/register",
+  login: "/api/auth/login",
+  expenses: "/api/expenses"
+};
 
-function setToken(token) {
-  localStorage.setItem("token", token);
-}
+const state = {
+  token: localStorage.getItem("flowfund_token") || "",
+  user: JSON.parse(localStorage.getItem("flowfund_user") || "null")
+};
 
-function clearToken() {
-  localStorage.removeItem("token");
-}
-
-function isLoggedIn() {
-  return !!getToken();
-}
-
-// ---------- Small UI helpers ----------
 function $(id) {
   return document.getElementById(id);
 }
 
-function show(el) {
-  if (el) el.style.display = "block";
+function log(msg, type = "info") {
+  const el = $("log");
+  const time = new Date().toLocaleTimeString();
+  const prefix = type === "error" ? "❌" : type === "ok" ? "✅" : "ℹ️";
+  el.innerHTML += `${prefix} [${time}] ${escapeHtml(msg)}<br/>`;
+  el.scrollTop = el.scrollHeight;
 }
 
-function hide(el) {
-  if (el) el.style.display = "none";
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
-function setText(el, text) {
-  if (el) el.textContent = text;
+function setApiStatus(text, ok = false) {
+  const pill = $("apiStatus");
+  pill.textContent = `API: ${text}`;
+  pill.style.borderColor = ok ? "rgba(44,255,136,0.45)" : "rgba(255,77,109,0.35)";
+  pill.style.color = ok ? "rgba(232,255,241,0.85)" : "rgba(255,200,210,0.9)";
 }
 
-function showError(msg) {
-  const el = $("error");
-  if (el) {
-    el.textContent = msg;
-    el.style.display = "block";
+function setSessionUI() {
+  const info = $("sessionInfo");
+  const btnLogout = $("btnLogout");
+  const btnLoad = $("btnLoadExpenses");
+
+  if (state.token) {
+    const email = state.user?.email || "(unknown)";
+    info.textContent = `Logged in as ${email}`;
+    btnLogout.disabled = false;
+    btnLoad.disabled = false;
+    $("expensesList").classList.remove("muted");
+    $("expensesList").textContent = "Click Load to fetch expenses.";
   } else {
-    alert(msg);
+    info.textContent = "Not logged in";
+    btnLogout.disabled = true;
+    btnLoad.disabled = true;
+    $("expensesList").classList.add("muted");
+    $("expensesList").textContent = "Login to load expenses.";
   }
 }
 
-function clearError() {
-  const el = $("error");
-  if (el) {
-    el.textContent = "";
-    el.style.display = "none";
-  }
-}
+async function apiFetch(path, options = {}) {
+  const url = API_BASE + path;
 
-// ---------- API wrapper (adds Authorization automatically) ----------
-async function api(path, { method = "GET", body = null, auth = false } = {}) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
 
-  if (auth) {
-    const token = getToken();
-    if (!token) {
-      // Don’t spam login loop — just show auth screen once.
-      throw { status: 401, message: "Not logged in" };
-    }
-    headers["Authorization"] = `Bearer ${token}`;
+  if (state.token) {
+    headers.Authorization = `Bearer ${state.token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null
+  const res = await fetch(url, {
+    ...options,
+    headers
   });
 
-  // If backend returns non-JSON sometimes, be safe:
-  const text = await res.text();
   let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  const text = await res.text();
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
   if (!res.ok) {
-    const msg =
-      data?.error?.message ||
-      data?.message ||
-      `Request failed (${res.status})`;
-    throw { status: res.status, message: msg, data };
+    const msg = typeof data === "string" ? data : (data?.message || data?.error || `HTTP ${res.status}`);
+    throw new Error(msg);
   }
 
   return data;
 }
 
-// ---------- Auth UI control ----------
-function renderAuthState() {
-  const authBox = $("authBox");       // login/register container
-  const appBox = $("appBox");         // main app container
-  const logoutBtn = $("logoutBtn");   // optional button
-
-  clearError();
-
-  if (isLoggedIn()) {
-    hide(authBox);
-    show(appBox);
-    show(logoutBtn);
-  } else {
-    show(authBox);
-    hide(appBox);
-    hide(logoutBtn);
+async function checkHealth() {
+  try {
+    const data = await apiFetch(ENDPOINTS.health, { method: "GET", headers: {} });
+    setApiStatus("online", true);
+    log(`Health OK: ${JSON.stringify(data)}`, "ok");
+  } catch (e) {
+    setApiStatus("offline", false);
+    log(`Health failed: ${e.message}`, "error");
+    log(`If /health is not your route, update ENDPOINTS.health in app.js`, "error");
   }
 }
 
-// ---------- Auth actions ----------
-async function onRegister(e) {
+function saveSession(token, user) {
+  state.token = token || "";
+  state.user = user || null;
+  localStorage.setItem("flowfund_token", state.token);
+  localStorage.setItem("flowfund_user", JSON.stringify(state.user));
+  setSessionUI();
+}
+
+function clearSession() {
+  saveSession("", null);
+  log("Logged out.", "ok");
+}
+
+async function handleRegister(e) {
   e.preventDefault();
-  clearError();
+  const name = $("regName").value.trim();
+  const email = $("regEmail").value.trim();
+  const password = $("regPassword").value;
 
-  const name = $("regName")?.value?.trim() || "";
-  const email = $("regEmail")?.value?.trim() || "";
-  const password = $("regPassword")?.value || "";
-
-  if (!name || !email || password.length < 6) {
-    return showError("Register: name, email, password (>=6) required.");
-  }
+  if (!name || !email || !password) return;
 
   try {
-    const data = await api("/auth/register", {
+    log("Registering…");
+    const data = await apiFetch(ENDPOINTS.register, {
       method: "POST",
-      body: { name, email, password },
-      auth: false
+      body: JSON.stringify({ name, email, password })
     });
 
-    if (!data?.token) return showError("Register failed: No token received.");
-    setToken(data.token);
+    log("Registered successfully.", "ok");
 
-    renderAuthState();
-    await refreshAll();
+    // Some backends return token on register, some don't.
+    // We'll try common shapes.
+    const token = data?.token || data?.accessToken || data?.jwt || "";
+    const user = data?.user || { email, name };
+
+    if (token) {
+      saveSession(token, user);
+      log("Auto-logged in after register.", "ok");
+    } else {
+      log("Now login using the Login form.", "info");
+    }
+    e.target.reset();
   } catch (err) {
-    showError(`Register failed: ${err.message || "Unknown error"}`);
+    log(`Register failed: ${err.message}`, "error");
   }
 }
 
-async function onLogin(e) {
+async function handleLogin(e) {
   e.preventDefault();
-  clearError();
-
-  const email = $("loginEmail")?.value?.trim() || "";
-  const password = $("loginPassword")?.value || "";
-
-  if (!email || !password) {
-    return showError("Login: email and password required.");
-  }
+  const email = $("loginEmail").value.trim();
+  const password = $("loginPassword").value;
 
   try {
-    const data = await api("/auth/login", {
+    log("Logging in…");
+    const data = await apiFetch(ENDPOINTS.login, {
       method: "POST",
-      body: { email, password },
-      auth: false
+      body: JSON.stringify({ email, password })
     });
 
-    if (!data?.token) return showError("Login failed: No token received.");
-    setToken(data.token);
+    // Common response shapes:
+    const token = data?.token || data?.accessToken || data?.jwt;
+    const user = data?.user || { email };
 
-    renderAuthState();
-    await refreshAll();
+    if (!token) {
+      throw new Error("Login response did not include a token. Update app.js parsing to match your backend.");
+    }
+
+    saveSession(token, user);
+    log("Login success.", "ok");
+    e.target.reset();
   } catch (err) {
-    showError(`Login failed: ${err.message || "Unknown error"}`);
+    log(`Login failed: ${err.message}`, "error");
   }
 }
 
-function onLogout() {
-  clearToken();
-  renderAuthState();
-  // Optional: clear UI
-  setText($("summary"), "");
-  const list = $("txList");
-  if (list) list.innerHTML = "";
+function renderExpenses(expenses) {
+  const list = $("expensesList");
+  if (!Array.isArray(expenses) || expenses.length === 0) {
+    list.innerHTML = `<div class="muted">No expenses found.</div>`;
+    return;
+  }
+
+  list.innerHTML = expenses
+    .map((x) => {
+      const title = escapeHtml(x.title ?? x.name ?? "Expense");
+      const amount = Number(x.amount ?? x.value ?? 0).toFixed(2);
+      const category = escapeHtml(x.category ?? "Other");
+      const date = escapeHtml((x.date ?? x.createdAt ?? "").toString().slice(0, 10));
+
+      return `
+        <div class="item">
+          <div class="item-top">
+            <div class="item-title">${title}</div>
+            <div class="mono">$${amount}</div>
+          </div>
+          <div class="item-meta">
+            <span>📌 ${category}</span>
+            ${date ? `<span>🗓️ ${date}</span>` : ""}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
-// ---------- Transactions ----------
-async function onAddTransaction(e) {
-  e.preventDefault();
-  clearError();
-
-  const type = $("txType")?.value || "EXPENSE";
-  const amount = Number($("txAmount")?.value || 0);
-  const date = $("txDate")?.value || "";
-  const category = $("txCategory")?.value?.trim() || "";
-  const title = $("txTitle")?.value?.trim() || "";
-  const note = $("txNote")?.value?.trim() || "";
-  const currency = $("txCurrency")?.value || "CAD";
-
-  if (!["INCOME", "EXPENSE"].includes(type)) return showError("Type must be INCOME or EXPENSE.");
-  if (!amount || amount <= 0) return showError("Amount must be > 0.");
-  if (!date || !category || !title) return showError("date, category, title required.");
+async function loadExpenses() {
+  if (!state.token) {
+    log("Please login first.", "error");
+    return;
+  }
 
   try {
-    await api("/transactions", {
+    log("Loading expenses…");
+    const data = await apiFetch(ENDPOINTS.expenses, { method: "GET" });
+
+    // Some APIs return { expenses: [...] }, some return [...]
+    const expenses = Array.isArray(data) ? data : (data?.expenses || data?.data || []);
+    renderExpenses(expenses);
+    log(`Loaded ${expenses.length} expense(s).`, "ok");
+  } catch (err) {
+    log(`Load expenses failed: ${err.message}`, "error");
+    log(`If your route is different, update ENDPOINTS.expenses in app.js`, "info");
+  }
+}
+
+async function addExpense(e) {
+  e.preventDefault();
+
+  if (!state.token) {
+    log("Login required to add expense.", "error");
+    return;
+  }
+
+  const title = $("expTitle").value.trim();
+  const amount = parseFloat($("expAmount").value);
+  const category = $("expCategory").value;
+  const date = $("expDate").value || undefined;
+
+  try {
+    log("Adding expense…");
+    const payload = { title, amount, category };
+    if (date) payload.date = date;
+
+    const data = await apiFetch(ENDPOINTS.expenses, {
       method: "POST",
-      body: { type, amount, date, category, title, note, currency },
-      auth: true
+      body: JSON.stringify(payload)
     });
 
-    // reset some fields (optional)
-    if ($("txAmount")) $("txAmount").value = "";
-    if ($("txTitle")) $("txTitle").value = "";
-    if ($("txNote")) $("txNote").value = "";
+    log("Expense added.", "ok");
+    e.target.reset();
 
-    await refreshAll();
+    // Refresh list after add (optional)
+    await loadExpenses();
+
+    // Show what backend returned (helps debug)
+    log(`Add response: ${JSON.stringify(data)}`, "info");
   } catch (err) {
-    if (err.status === 401) {
-      // Token invalid/expired or missing — go to login once
-      clearToken();
-      renderAuthState();
-      return showError("Session expired. Please login again.");
-    }
-    showError(`Add transaction failed: ${err.message || "Unknown error"}`);
+    log(`Add expense failed: ${err.message}`, "error");
   }
 }
 
-async function loadTransactions() {
-  const list = $("txList");
-  if (!list) return;
+function wireEvents() {
+  $("formRegister").addEventListener("submit", handleRegister);
+  $("formLogin").addEventListener("submit", handleLogin);
+  $("formExpense").addEventListener("submit", addExpense);
 
-  list.innerHTML = "Loading...";
-
-  try {
-    const data = await api("/transactions", { auth: true });
-    const items = data?.items || [];
-
-    if (items.length === 0) {
-      list.innerHTML = "<li>No transactions yet.</li>";
-      return;
-    }
-
-    list.innerHTML = items.map(tx => {
-      const sign = tx.type === "EXPENSE" ? "-" : "+";
-      return `<li>
-        <strong>${tx.title}</strong> (${tx.category}) — ${sign}${tx.amount} ${tx.currency}
-        <br/>
-        <small>${tx.date}${tx.note ? " • " + tx.note : ""}</small>
-      </li>`;
-    }).join("");
-  } catch (err) {
-    if (err.status === 401) {
-      clearToken();
-      renderAuthState();
-      showError("Session expired. Please login again.");
-      return;
-    }
-    list.innerHTML = "<li>Failed to load transactions.</li>";
-    showError(err.message || "Failed to load transactions.");
-  }
+  $("btnLoadExpenses").addEventListener("click", loadExpenses);
+  $("btnLogout").addEventListener("click", () => {
+    clearSession();
+    renderExpenses([]);
+  });
 }
 
-async function loadSummary() {
-  const el = $("summary");
-  if (!el) return;
+document.addEventListener("DOMContentLoaded", async () => {
+  log("UI loaded. Wiring events…");
+  wireEvents();
+  setSessionUI();
 
-  setText(el, "Loading...");
+  // Auto set date to today
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  const iso = `${yyyy}-${mm}-${dd}`;
+  $("expDate").value = iso;
 
-  try {
-    const data = await api("/summary", { auth: true });
-    const income = data?.income ?? 0;
-    const expense = data?.expense ?? 0;
-    const balance = data?.balance ?? 0;
-
-    setText(el, `Income: ${income} | Expense: ${expense} | Balance: ${balance}`);
-  } catch (err) {
-    if (err.status === 401) {
-      clearToken();
-      renderAuthState();
-      showError("Session expired. Please login again.");
-      return;
-    }
-    setText(el, "");
-    showError(err.message || "Failed to load summary.");
-  }
-}
-
-async function refreshAll() {
-  await Promise.all([loadSummary(), loadTransactions()]);
-}
-
-// ---------- Wire up events ----------
-function init() {
-  // forms/buttons (IDs expected in HTML)
-  $("registerForm")?.addEventListener("submit", onRegister);
-  $("loginForm")?.addEventListener("submit", onLogin);
-  $("txForm")?.addEventListener("submit", onAddTransaction);
-  $("logoutBtn")?.addEventListener("click", onLogout);
-
-  renderAuthState();
-
-  // If already logged in, load data
-  if (isLoggedIn()) {
-    refreshAll().catch(() => {});
-  }
-}
-
-document.addEventListener("DOMContentLoaded", init);
+  await checkHealth();
+});
